@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import supremacy_cli; print\\('Import successful!'\\)\")",
+      "Bash(mysql)",
+      "Bash(mysql supremacy_game *)"
+    ]
+  }
+}

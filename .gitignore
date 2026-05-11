@@ -1,0 +1,43 @@
+# Environment variables - add your own .env if needed
+.env
+.env.local
+.pyvenv.cfg
+pyvenv.cfg
+
+# Build output
+dist/
+build/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+
+# Node modules (frontend dependencies)
+node_modules/
+package-lock.json
+
+# IDE settings
+.idea/
+.vscode/settings.json
+
+# Virtual environments
+venv/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# Database files (optional - uncomment if you want to include your database)
+# supremacy.db
+
+# Old build files
+game_engine.old
+game_engine.old.2

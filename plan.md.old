@@ -1,0 +1,75 @@
+# Supremacy Remake Implementation Plan (Python/MariaDB) - V2.0
+## Context & Goal
+The objective is a full-stack remake of *Supremacy*, using Python for logic and MariaDB for persistence, modeling the complex mechanics described across 8 distinct game screens. The core principle remains: **SQL manages state; Python handles transactions and business logic.**
+
+**Core Technologies:**
+*   **Language:** Python 3+
+*   **Database:** MariaDB (MariaDB functions will be used where stored procedures are beneficial).
+*   **Architecture Goal:** Decouple the Game Engine (Simulation Logic) from the Presentation Layer (CLI/Web UI). The game operates on a **turn-based, time-advancing model**.
+
+## Phase 1: Data Model & Schema Design (SQL Focus) - Expanded Requirements
+The schema must track every physical and statistical element of the game.
+
+**Key Tables:**
+
+1.  **`users`**: Player identification and main state metrics.
+    *   `user_id` (PK), `username`, `credits`.
+2.  **`systems`**: Galaxy regions.
+    *   `system_id` (PK), `name`, `difficulty_level`.
+3.  **`planets`**: Details of every world in the system.
+    *   `planet_id` (PK), `system_id` (FK), `name`, `owner_user_id` (FK to `users`), `is_starbase` (Boolean).
+4.  **`planetary_stats`**: Tracks key metrics for a planet.
+    *   `planet_id` (PK, FK)
+    *   `population`: Current inhabitants.
+    *   `morale`: Percentage/score (influences tax and growth).
+    *   `tax_rate`: Derived from morale/stability.
+    *   `food_level`, `mineral_level`, `energy_level`, `fuel_level`: Current reserves in tonnes.
+5.  **`colonies`**: Tracks established infrastructure on a planet.
+    *   `colony_id` (PK), `planet_id` (FK)
+    *   `farming_stations`: Count/Capacity.
+    *   `mining_stations`: Count/Capacity.
+    *   `solar_satellites`: Orbiting count (for energy).
+6.  **`ships`**: Tracks movable assets, including those in docking bays or transit.
+    *   `ship_id` (PK), `owner_user_id`, `planet_id`, `docking_bay_slot` (1-3).
+    *   `ship_type`: Enum (BattleCruiser, CargoShip, FarmingShip, MineralShip).
+    *   `cargo_manifest`: JSON or dedicated table tracking resource/crew load.
+7.  **`military_platoon`**: Details of military presence on a planet.
+    *   `platoon_id` (PK), `planet_id` (FK)
+    *   `troops_available`: Population segment assigned to defense.
+    *   `equipment_strength`, `weapon_strength`: Combined defensive/offensive rating.
+
+## Phase 2: Core Simulation Logic (Python Engine Focus)
+
+The simulation must run as a continuous, turn-based loop (`run_turn(user_id)`).
+
+**Simulation Flow:**
+1.  **Resource Update & Survival Check:** Calculate net change for all resources on every planet based on infrastructure/population needs vs. generation rates. If Food or Energy is critically low, Morale drops drastically.
+2.  **Economic Cycle (Taxation & Growth):** New Taxes are calculated from the planet's current `tax_rate`. Population growth and morale changes are updated based on resource surplus/deficit.
+3.  **Action Resolution:** Process all pending player/AI actions (movement, purchases, training).
+4.  **Combat Simulation:** Resolve any active conflicts between enemy defenses or ships (`military_platoon` comparison) until a stable state is reached.
+
+**Key Functionality to Model:**
+*   `calculate_resource_flow(planet_id)`: Handles all resource inputs and outputs for a single turn.
+*   `process_ship_movement()`: Validates pathing, consumes fuel, updates ship location/cargo.
+*   `run_combat(planet1, planet2)`: The core combat engine determining outcomes based on defense strength vs. assault force.
+
+## Phase 3: CLI Frontend Design (Python Scripting) - Screen Mirroring
+The CLI must function as an interactive terminal interface mirroring the game's screens.
+
+**Command Structure:**
+*   `supremacy_cli.py --home`: Lists all planets, allowing selection by index/name.
+*   `supremacy_cli.py --screen 1 (Docking Bay)`: Manages ship location and issues movement commands (`move <ship_id> <destination_planet_id>`).
+*   `supremacy_cli.py --screen 2 (Purchase Assets)`: Interface for buying ships/infrastructure, checking player funds against `assets_catalog`. Handles the Terraformer purchase logic.
+*   `supremacy_cli.py --screen 3 (Planet Details)`: Read-only view of all stats (`planetary_stats`, Credits).
+*   `supremacy_cli.py --screen 4 (Military Platoon)`: Manages troop training and equipment purchasing, updating `military_platoon`.
+*   `supremacy_cli.py --screen 5/6 (Cargo & Assignment)`: Handles manifest loading/unloading for ships and assigning surface workers to infrastructure.
+*   `supremacy_cli.py --screen 7 (Battle Screen)`: Visualization of active battle state, allowing player intervention (e.g., increasing aggression).
+
+## Phase 4: Web UI Backend API Design (Python/FastAPI) - Transactional Endpoints
+The backend must expose robust REST endpoints that treat every action as a database transaction to prevent race conditions and data corruption.
+
+**Endpoint Goals:** Every POST request must execute the full business logic in one atomic DB transaction.
+*   `POST /api/game/turn`: Triggers `run_turn()` for all players (Player + AI).
+*   `POST /api/action/{screen_number}`: A centralized handler that routes to specific, validated actions (e.g., `/purchase`, `/move`).
+
+This V2 plan is comprehensive and incorporates the granular gameplay details necessary for a true remake.

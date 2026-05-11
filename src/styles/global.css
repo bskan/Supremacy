@@ -1,0 +1,1696 @@
+/* global.css - Supremacy Game Web Interface Styles */
+
+/* =============================================================================
+   Color Palette - Mirror CLI terminal aesthetic with modern touches
+   ============================================================================= */
+
+:root {
+  /* Primary Colors - Terminal-inspired dark theme */
+  --color-primary: #3498db;           /* Blue for main actions */
+  --color-primary-dark: #2980b9;      /* Darker blue for hover states */
+  --color-secondary: #e74c3c;         /* Red for destructive/secondary actions */
+  --color-secondary-dark: #c0392b;    /* Darker red */
+
+  /* Neutral Colors */
+  --color-bg-primary: #1a1a2e;        /* Main background */
+  --color-bg-secondary: #16213e;      /* Secondary background (cards) */
+  --color-bg-tertiary: #0f3460;       /* Tertiary background (headers) */
+  --color-surface: #1a1a2e;           /* Card surface */
+  --color-surface-light: #2d2d44;     /* Lighter surface */
+
+  /* Text Colors */
+  --color-text-primary: #ffffff;      /* Primary text */
+  --color-text-secondary: #aab8c2;    /* Secondary text (subdued) */
+  --color-text-muted: #6b7a91;        /* Muted text (placeholders) */
+
+  /* Status Colors */
+  --color-success: #27ae60;           /* Green for success */
+  --color-warning: #f39c12;           /* Orange for warnings */
+  --color-error: #e74c3c;             /* Red for errors */
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+/* =============================================================================
+   Reset & Base Styles
+   ============================================================================= */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* =============================================================================
+   Navigation Bar - CLI menu style header
+   ============================================================================= */
+
+.navigation-bar {
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid #2d3a55;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.nav-logo h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.nav-logo .nav-status {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+/* =============================================================================
+   Screen Container Styles
+   ============================================================================= */
+
+.screen {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  min-height: calc(100vh - 70px);
+}
+
+/* =============================================================================
+   Message Box (Status Display)
+   ============================================================================= */
+
+.message-box {
+  background: var(--color-bg-secondary);
+  border-left: 4px solid var(--color-primary);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  border-radius: var(--radius-sm);
+}
+
+.message-box strong {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+/* =============================================================================
+   Back Button (Standard Navigation)
+   ============================================================================= */
+
+.back-btn {
+  background: transparent;
+  border: 1px solid var(--color-text-muted);
+  color: var(--color-text-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-bottom: 1rem;
+  font-size: 0.9375rem;
+}
+
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+/* =============================================================================
+   Button Styles (Common UI Components)
+   ============================================================================= */
+
+.btn {
+  background: var(--color-surface-light);
+  border: none;
+  color: var(--color-text-primary);
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0.25rem;
+  transition: background var(--transition-fast);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.btn-secondary {
+  background: var(--color-bg-secondary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+
+/* =============================================================================
+   Credits Display (Global at Screen Top)
+   ============================================================================= */
+
+.credits-display {
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  font-size: 0.9375rem;
+  color: var(--color-text-primary);
+}
+
+.credits-display strong {
+  display: block;
+}
+
+/* =============================================================================
+   Credits Badge (Inline Display)
+   ============================================================================= */
+
+.credits-badge {
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+/* =============================================================================
+   Planet Header (Top Section with Badge + System ID)
+   ============================================================================= */
+
+.planet-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--color-bg-tertiary);
+}
+
+.planet-header h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.5rem;
+  color: var(--color-text-primary);
+}
+
+.planet-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.status-badge, .credits-badge {
+  background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.system-name {
+  background: var(--color-surface-light);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Info Grid (Planet Details Layout)
+   ============================================================================= */
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.info-section h3 {
+  font-size: 1.125rem;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-bg-tertiary);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* =============================================================================
+   Info Row (Individual Planet Details)
+   ============================================================================= */
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.625rem;
+  border-bottom: 1px solid #2d3a55;
+  font-size: 0.9375rem;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row strong {
+  color: var(--color-primary);
+}
+
+/* =============================================================================
+   Infrastructure Grid (Planet Infrastructure Cards)
+   ============================================================================= */
+
+.infrastructure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.infra-card {
+  background: var(--color-surface-light);
+  padding: 0.625rem;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.infra-icon {
+  display: block;
+  font-size: 1.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.infra-label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.infra-card strong {
+  display: block;
+  font-size: 1.25rem;
+  margin-top: 0.25rem;
+}
+
+/* =============================================================================
+   Fleet Grid (Planet Fleet Inventory)
+   ============================================================================= */
+
+.fleet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.fleet-card {
+  background: var(--color-surface-light);
+  padding: 0.625rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.fleet-icon {
+  font-size: 1.75rem;
+  color: var(--color-primary);
+  margin-bottom: 0.375rem;
+}
+
+.fleet-card strong {
+  font-size: 0.9375rem;
+}
+
+.fleet-count {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-top: auto;
+}
+
+/* =============================================================================
+   System List Grid (System Cards)
+   ============================================================================= */
+
+.systems-grid, .planet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* =============================================================================
+   System Card Styles (Browse Systems Screen)
+   ============================================================================= */
+
+.system-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid #2d3a55;
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-normal);
+}
+
+.system-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.system-card h3 {
+  margin-bottom: 0.5rem;
+  color: var(--color-primary);
+}
+
+.planet-count {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.preview-planet {
+  background: var(--color-surface-light);
+  padding: 0.625rem;
+  border-radius: var(--radius-sm);
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+}
+
+/* Owner Badge Styles */
+.owner-badge {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.owner-badge.owned {
+  background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+  color: white;
+}
+
+.owner-badge.neutral {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-muted);
+}
+
+/* System Badge (NEI/ENGI/etc) */
+.system-badge {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.system-badge.nei {
+  background: #f39c12;
+  color: white;
+}
+
+.system-badge.engi {
+  background: #9b59b6;
+  color: white;
+}
+
+/* =============================================================================
+   Action Buttons Area
+   ============================================================================= */
+
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+/* =============================================================================
+   Fleet View (Docking Bay Layout)
+   ============================================================================= */
+
+.fleet-view {
+  margin-top: 1rem;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+}
+
+.section-title {
+  font-size: 1.125rem;
+  color: var(--color-primary);
+}
+
+.planet-info {
+  background: var(--color-surface-light);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+/* =============================================================================
+   Debug Screen Specific Styles
+   ============================================================================= */
+
+.debug-resource-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.debug-resource-levels .level-item {
+  background: var(--color-surface-light);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.planet-debug-card h4 {
+  margin-bottom: 0.5rem;
+}
+
+.planet-tag, .planet-debug-info {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+/* Production/Consumption Stats Styles */
+.production-breakdown, .production-stats, .ship-stats, .infrastructure-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.production-breakdown span,
+.production-stats span,
+.ship-stats span,
+.infrastructure-stats span {
+  background: var(--color-surface-light);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.production-breakdown h3, .production-stats h4 {
+  margin-bottom: 0.5rem;
+}
+
+.ship-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* Production/Consumption Stat Row (PlanetDetails) */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-label {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.stat-value {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.875rem;
+}
+
+.stat-value.positive {
+  color: var(--color-success);
+}
+
+.stat-value.negative {
+  color: var(--color-secondary);
+}
+
+.net-flow {
+  margin-top: 0.5rem;
+  padding: 0.625rem;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.net-label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.net-value {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+/* Preview Stats on SystemMap */
+.preview-stats, .planet-stats {
+  margin-top: 0.375rem;
+  padding: 0.375rem;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.infra-preview, .infra-stats {
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.375rem;
+  background: var(--color-surface-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.infra-stats {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* Resource Levels Display */
+.resource-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+}
+
+.resource-levels span {
+  background: var(--color-surface-light);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.resource-levels strong {
+  color: var(--color-text-primary);
+}
+
+/* Fleet Management Styles */
+.fleet-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  background: var(--color-surface-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+}
+
+.fleet-item strong {
+  min-width: 100px;
+}
+
+.fleet-icon {
+  font-size: 1.25rem;
+}
+
+.fleet-count {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+/* Info Row Styles */
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+  font-size: 0.9375rem;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row strong {
+  color: var(--color-primary);
+}
+
+.info-section h3 {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+}
+
+/* =============================================================================
+   Marketplace Catalog Styles
+   ============================================================================= */
+
+.catalog-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.catalog-tabs button {
+  background: var(--color-surface-light);
+  border: none;
+  color: var(--color-text-secondary);
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.catalog-tabs button.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.catalog-content {
+  margin-bottom: 1rem;
+}
+
+.loading, .empty-catalog {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-text-muted);
+}
+
+/* Asset Card Styles */
+.asset-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid #2d3a55;
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.asset-card.out-of-credits {
+  opacity: 0.6;
+}
+
+.asset-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.asset-icon {
+  font-size: 1.75rem;
+}
+
+.asset-category {
+  background: var(--color-bg-tertiary);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.asset-category.out-of-credits {
+  background: var(--color-bg-primary);
+  color: var(--color-text-muted);
+}
+
+.asset-desc {
+  color: var(--color-text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.asset-price {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-success);
+  margin-bottom: 0.75rem;
+}
+
+/* Out of Credits Badge */
+.out-of-credits-badge {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-text-muted);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* Catalog Actions */
+.catalog-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/* =============================================================================
+   Combat Result Styles
+   ============================================================================= */
+
+.combat-result {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.combat-result h3 {
+  color: var(--color-primary);
+  margin-bottom: 0.75rem;
+}
+
+/* =============================================================================
+   Action Buttons Area
+   ============================================================================= */
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+/* =============================================================================
+   Debug Actions Section (Debug Panel)
+   ============================================================================= */
+
+.debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.debug-instructions, .adjustment-instructions {
+  background: var(--color-surface-light);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+.debug-instructions h4, .adjustment-instructions h4 {
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.debug-instructions ul, .adjustment-instructions ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.debug-instructions li, .adjustment-instructions li {
+  margin-bottom: 0.375rem;
+}
+
+.debug-actions-mini {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.debug-actions-mini button {
+  background: var(--color-surface-light);
+  border: 1px solid #2d3a55;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.debug-actions-mini button:hover {
+  background: var(--color-surface);
+}
+
+.planet-debug-info {
+  background: var(--color-bg-secondary);
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  margin-top: 0.75rem;
+}
+
+.planet-debug-info h3 {
+  color: var(--color-primary);
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #2d3a55;
+  padding-bottom: 0.5rem;
+}
+
+/* =============================================================================
+   Fleet System Header (planet info)
+   ============================================================================= */
+
+.fleet-system-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--color-bg-tertiary);
+}
+
+.fleet-system-header h3 {
+  font-size: 1.25rem;
+  color: var(--color-primary);
+}
+
+.system-name.fleet-header {
+  background: var(--color-surface-light);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.inf-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Planet Details Info Section Styles
+   ============================================================================= */
+
+.info-section {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+
+.info-section h3 {
+  color: var(--color-primary);
+  border-bottom: 1px solid #2d3a55;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* =============================================================================
+   Mobile Responsive Adjustments
+   ============================================================================= */
+
+@media (max-width: 768px) {
+  .navigation-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .nav-screen-buttons {
+    display: flex;
+    overflow-x: auto;
+    gap: 0.5rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .nav-btn {
+    white-space: nowrap;
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .controls {
+    flex-direction: column;
+  }
+
+  .systems-grid, .planet-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fleet-list, .fleet-grid {
+    flex-direction: column;
+  }
+
+  .catalog-tabs {
+    flex-direction: column;
+  }
+}
+
+/* =============================================================================
+   Marketplace Hero Banner Styles (Netflix-style horizontal scroll)
+   ============================================================================= */
+
+.marketplace-hero-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--header-height));
+}
+
+.marketplace-header {
+  background: linear-gradient(180deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+  padding: 1.5rem 1rem 1rem;
+  border-bottom: 1px solid #2d3a55;
+}
+
+.marketplace-header h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.marketplace-header .credits-display {
+  background: var(--color-bg-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.marketplace-header .credits-display strong {
+  color: var(--color-success);
+}
+
+/* Category Tabs */
+.category-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.category-tabs button {
+  background: var(--color-surface-light);
+  border: none;
+  color: var(--color-text-secondary);
+  padding: 0.625rem 1rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.category-tabs button.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+/* Hero Scroll Container */
+.hero-scroll-container {
+  padding: 1.5rem 0;
+  flex-grow: 1;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hero-scroll-track {
+  display: flex;
+  align-items: stretch;
+  gap: 1.5rem; /* Widened from 1rem to accommodate larger cards */
+  min-width: max-content;
+  padding-left: 0.5rem;
+  position: relative;
+  transition: opacity var(--transition-fast);
+}
+
+.hero-scroll-track.hover {
+  overflow-x: scroll;
+  cursor: grab;
+}
+
+/* Scroll Buttons */
+.scroll-btn {
+  background: var(--color-bg-tertiary);
+  border: 1px solid #2d3a55;
+  color: var(--color-text-primary);
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.scroll-btn:hover:not(:disabled) {
+  background: var(--color-primary);
+  transform: scale(1.05);
+}
+
+.scroll-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scroll-btn.left {
+  margin-right: -0.75rem;
+}
+
+.scroll-btn.right {
+  margin-left: -0.75rem;
+}
+
+/* Scroll Indicator */
+.scroll-indicator {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  padding: 0 1rem;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Hero Item Card */
+.hero-item-card {
+  flex-shrink: 0;
+  width: 400px; /* Widened from 320px to match taller header and maintain better aspect ratio */
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+  border: 1px solid #2d3a55;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  position: relative;
+}
+
+.hero-item-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.hero-item-card:active:not(.unavailable):hover {
+  transform: translateY(0);
+}
+
+/* Hero Header (Image Area) */
+.hero-header {
+  position: relative;
+  height: 420px; /* Increased from 140px to 3x size */
+  background: rgba(30, 58, 95, 0.85); /* More transparent to show image better */
+  overflow: hidden;
+}
+
+.hero-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.95; /* Increased opacity since image is larger */
+}
+
+.hero-category-badge {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(26, 26, 46, 0.9);
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.hero-category-badge .category-icon {
+  color: var(--color-primary);
+  font-size: 1.125rem;
+}
+
+/* Hero Content */
+.hero-content {
+  padding: 1.75rem;
+}
+
+.hero-item-name {
+  margin: 0 0 0.875rem;
+  font-size: 1.25rem; /* Balanced with larger card width */
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.hero-item-desc {
+  margin: 0 0 1.125rem;
+  color: var(--color-text-secondary);
+  font-size: 0.9375rem; /* Kept readable */
+  line-height: 1.45;
+}
+
+/* Hero Stats */
+.hero-stats {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.hero-stats .stat {
+  font-size: 0.875rem;
+}
+
+.hero-stats .stat.price {
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.hero-stats .stat.unavailable {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  background: var(--color-bg-tertiary);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+}
+
+/* Hero Purchase Button */
+.hero-purchase-btn {
+  width: 100%;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.hero-purchase-btn:hover {
+  background: var(--color-primary-dark);
+  transform: scale(1.02);
+}
+
+/* Footer Actions */
+.marketplace-footer {
+  background: var(--color-bg-secondary);
+  padding: 1rem;
+  border-top: 1px solid #2d3a55;
+}
+
+.marketplace-footer .marketplace-instructions {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #2d3a55;
+}
+
+.marketplace-footer ul {
+  margin-top: 0.5rem;
+  padding-left: 1.25rem;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+/* =============================================================================
+   Credits Display Styles (Consistent across components)
+   ============================================================================= */
+
+.credits-display-small {
+  background: var(--color-bg-secondary);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+}
+
+.credits-display-small strong {
+  color: var(--color-success);
+}
+
+/* =============================================================================
+   Planet Preview Styles (SystemMap)
+   ============================================================================= */
+
+.system-planet-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid #2d3a55;
+  border-radius: var(--radius-md);
+  padding: 0.75rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-normal);
+}
+
+.system-planet-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.system-planet-card h3 {
+  margin-bottom: 0.5rem;
+  color: var(--color-primary);
+}
+
+.planets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+/* =============================================================================
+   Debug Screen Specific Styles
+   ============================================================================= */
+
+.debug-actions-mini button {
+  background: var(--color-surface-light);
+  border: 1px solid #2d3a55;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.debug-actions-mini button:hover {
+  background: var(--color-surface);
+}
+
+.planet-debug-info {
+  background: var(--color-bg-secondary);
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  margin-top: 0.75rem;
+}
+
+.planet-debug-info h3 {
+  color: var(--color-primary);
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #2d3a55;
+  padding-bottom: 0.5rem;
+}
+
+.adjustment-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #2d3a55;
+}
+
+.adjustment-controls button {
+  background: var(--color-surface-light);
+  border: none;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.adjustment-controls button:hover {
+  background: var(--color-surface);
+}
+
+/* =============================================================================
+   Asset Image Styles (for Marketplace Catalog)
+   ============================================================================= */
+
+.asset-image {
+  max-width: 120px;
+  max-height: 80px;
+  object-fit: contain;
+  margin-right: 0.5rem;
+  border-radius: var(--radius-sm);
+  background: #0f3460;
+}
+
+.asset-image[src*="battle_cruiser"] {
+  max-width: 140px;
+  max-height: 90px;
+}
+
+.asset-image[src*="cargo_ship"] {
+  max-width: 130px;
+  max-height: 85px;
+}
+
+.asset-image[src*="energy_satellite"] {
+  max-width: 140px;
+  max-height: 90px;
+}
+
+.asset-image[src*="farming"] {
+  max-width: 120px;
+  max-height: 80px;
+}
+
+.asset-image[src*="mineral"] {
+  max-width: 135px;
+  max-height: 88px;
+}
+
+.asset-image[src*="terraformer"] {
+  max-width: 150px;
+  max-height: 95px;
+}
+
+/* Equipment images - smaller sizes for weapons/armor */
+.asset-image[src*="armour"] {
+  max-width: 80px;
+  max-height: 70px;
+}
+
+.asset-image[src*="cannon"] {
+  max-width: 90px;
+  max-height: 65px;
+}
+
+.asset-image[src*="pistol"] {
+  max-width: 70px;
+  max-height: 60px;
+}
+
+/* =============================================================================
+   Production/Consumption Styles (CLI mirroring)
+   ============================================================================= */
+
+.production-breakdown, .production-stats, .ship-stats, .infrastructure-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.production-breakdown span,
+.production-stats span,
+.ship-stats span,
+.infrastructure-stats span {
+  background: var(--color-surface-light);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.production-breakdown h3, .production-stats h4 {
+  margin-bottom: 0.5rem;
+}
+
+.ship-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Fleet Management Styles (Enhanced)
+   ============================================================================= */
+
+.fleet-view, .fleet-overview, .fleet-by-system {
+  margin-top: 1rem;
+}
+
+.fleet-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  background: var(--color-surface-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+}
+
+.fleet-item strong {
+  min-width: 100px;
+}
+
+.fleet-icon {
+  font-size: 1.25rem;
+}
+
+.fleet-count {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+/* =============================================================================
+   Resource Level Styles (Debug Panel)
+   ============================================================================= */
+
+.resource-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+}
+
+.debug-resource-levels .level-item,
+.resource-levels span {
+  background: var(--color-surface-light);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.debug-resource-levels .level-item span {
+  font-weight: 600;
+}
+
+.planet-debug-card h4 {
+  margin-bottom: 0.5rem;
+}
+
+.planet-tag, .planet-debug-info {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+/* =============================================================================
+   Info Row Styles (CLI mirroring)
+   ============================================================================= */
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+  font-size: 0.9375rem;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row strong {
+  color: var(--color-primary);
+}
+
+.info-section h3 {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #2d3a55;
+}
+
+/* =============================================================================
+   Infrastructure Styles (CLI mirroring)
+   ============================================================================= */
+
+.infrastructure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.infra-card {
+  background: var(--color-surface-light);
+  padding: 0.625rem;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.infra-icon {
+  display: block;
+  font-size: 1.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.infra-label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.infra-card strong {
+  display: block;
+  font-size: 1.25rem;
+  margin-top: 0.25rem;
+}
+
+/* =============================================================================
+   Infrastructure Stats (Fleet Cards)
+   ============================================================================= */
+
+.infra-stats, .infra-preview {
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.375rem;
+  background: var(--color-surface-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.infra-stats {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* =============================================================================
+   Production/Consumption Stats (Planet Details)
+   ============================================================================= */
+
+.production-breakdown h3, .production-stats h4 {
+  margin-bottom: 0.5rem;
+}
+
+.ship-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Ship Stats (Fleet Card Production)
+   ============================================================================= */
+
+.ship-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Planet Info (Fleet View)
+   ============================================================================= */
+
+.planet-info {
+  background: var(--color-surface-light);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+/* =============================================================================
+   System Header (Fleet View)
+   ============================================================================= */
+
+.fleet-system-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--color-bg-tertiary);
+}
+
+.fleet-system-header h3 {
+  font-size: 1.25rem;
+  color: var(--color-primary);
+}
+
+.system-name.fleet-header {
+  background: var(--color-surface-light);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Info Stats (Fleet System Header)
+   ============================================================================= */
+
+.inf-stats {
+  background: var(--color-bg-tertiary);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+/* =============================================================================
+   Resource Levels (Debug Panel)
+   ============================================================================= */
+
+.planet-debug-info {
+  background: var(--color-bg-secondary);
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  margin-top: 0.75rem;
+}
+
+.planet-debug-info h3 {
+  color: var(--color-primary);
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #2d3a55;
+  padding-bottom: 0.5rem;
+}
+
+.adjustment-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #2d3a55;
+}
+
+.adjustment-controls button {
+  background: var(--color-surface-light);
+  border: none;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.adjustment-controls button:hover {
+  background: var(--color-surface);
+}
+

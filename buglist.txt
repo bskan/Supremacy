@@ -1,0 +1,32 @@
+Bug list
+Main Menu
+1. If the screens are numbered they should be in numerical order, on the top menu and the main menu the order seems to be random.
+
+Planetary System Dashboard
+1. Advance turn needs to be implemented as it says axios is not defined.
+2. None of the other buttons do anything.
+3. There should be a gap between the population and the Tax income, either a space or on a second line.
+
+[3] Planet Details doesn't load any screen
+
+Docking Bay/Fleet at All
+1. Stuck on Loading fleet data.
+2. Back to Single Planet View doesn't do anything.
+
+Purchase Assets
+1. The prices show as $$ or $ I think we should have the ₫ symbol across the board for currency.
+2. The purchase buttons have &#128640; at the beginning so that's not rendering correctly.
+3. The images need to be bigger.
+4. On Available ships - Clicking on purchase brings back 1146 (42S02): Table 'supremacy_game.assets' doesn't exist
+5. On Infrastructure/Equipment - Clicking on purchase brings back 404: Asset not found in catalog errors
+
+
+System List
+1. Doesn't seem to get data, shows NaN and Neutral on all systems.
+
+Battle Simulation
+1. Error Respose: Body has already been consumed.
+
+Debug Menu
+1. Clicking on any of the resources loads a blank page
+2. Clicking on any +1000 buttons brings back SQL errors like 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'VALUES(new_population) WHERE planet_id = 1' at line 2
