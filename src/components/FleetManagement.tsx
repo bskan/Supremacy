@@ -19,6 +19,7 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
   const [fleet, setFleet] = useState<Array<{ ship_type: string; count: number }>>([]);
   const [allPlanets, setAllPlanets] = useState<any[]>([]);
   const [activePlanet, setActivePlanet] = useState<number | null>(null);
+  const [destPlanet, setDestPlanet] = useState<number | null>(null);
   const [purchasedShips, setPurchasedShips] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("Loading fleet data...");
@@ -46,6 +47,23 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
     loadFleet();
   }, [activePlanet]);
 
+  // Load all planets list on mount for destination selector
+  useEffect(() => {
+    loadAllPlanets();
+  }, []);
+
+  const loadAllPlanets = async () => {
+    try {
+      const res = await fetch('/api/planets');
+      if (res.ok) {
+        const data = await res.json();
+        setAllPlanets(data);
+      }
+    } catch (error) {
+      setAllPlanets([]);
+    }
+  };
+
   const loadFleet = async () => {
     try {
       setIsLoading(true);
@@ -66,7 +84,6 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
       if (res.ok) {
         const data = await res.json();
         setFleet(data.resources?.fleet || []);
-        setAllPlanets([]);
         setMessage(`At ${data.name}: Fleet loaded.`);
 
         // Fetch purchased ships for this planet
@@ -140,13 +157,21 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
       setMessage("Please select a planet to view fleet first.");
       return;
     }
+    if (!destPlanet) {
+      setMessage("Please select a destination planet.");
+      return;
+    }
+    if (destPlanet === activePlanet) {
+      setMessage("Destination must be different from current planet.");
+      return;
+    }
 
     try {
       setIsLoading(true);
       const res = await fetch('/api/action/move_ship', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ship_id: 1, destination_planet_id: activePlanet }),
+        body: JSON.stringify({ ship_id: 1, destination_planet_id: destPlanet }),
       });
 
       const data = await res.json();
@@ -232,8 +257,20 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
 
         {/* Actions */}
         <div className="fleet-actions">
-          <button onClick={moveShip} disabled={!activePlanet || fleet.length === 0} className="btn btn-secondary">
-            &#10147; Move Ship to Dock
+          <div className="dest-selector" style={{marginBottom: '8px'}}>
+            <label>Move from Planet {activePlanet}: </label>
+            <select value={destPlanet || ''} onChange={(e) => setDestPlanet(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Select destination...</option>
+              {allPlanets
+                .filter(p => p.id !== activePlanet)
+                .map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+                ))}
+            </select>
+          </div>
+
+          <button onClick={moveShip} disabled={!activePlanet || fleet.length === 0 || !destPlanet} className="btn btn-secondary">
+            &#10147; Move Ship to Destination
           </button>
 
           <button onClick={showAllPlanets} className="btn btn-secondary">
