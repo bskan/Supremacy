@@ -16,7 +16,22 @@ from game_engine import (
     resolve_combat,
     ai_opponent_turn,
     get_db_connection,
-    DEFAULT_DB_CONFIG
+    DEFAULT_DB_CONFIG,
+    # New helper functions (prefixed to avoid shadowing endpoint names)
+    get_player_credits as ge_get_player_credits,
+    get_player_assets as ge_get_player_assets,
+    get_first_owned_planet_id,
+    get_asset_by_name,
+    has_player_owned_asset,
+    get_debug_planet_info,
+    get_debug_player_planets as ge_get_debug_player_planets,
+    adjust_resource_level,
+    add_credits_to_player,
+    get_player_over_planets,
+    get_dashboard_planets,
+    get_all_systems as ge_get_all_systems,
+    get_fleet_at_planet as ge_get_fleet_at_planet,
+    run_turn,
 )
 
 
@@ -540,13 +555,6 @@ def serve_web_demo():
 </html>'''
     return Response(html_content, media_type="text/html")
 
-class ResourceUpdate(BaseModel):
-    food: float
-    energy: float
-    mineral: float
-    fuel: float
-    taxable_income: float
-
 class ShipMoveRequest(BaseModel):
     ship_id: int
     destination_planet_id: int
@@ -600,20 +608,30 @@ def get_system_planets(system_id: int):
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
+        system_info = ge_get_all_systems(db_conn=conn)
+        systems_with_planets = system_info  # This returns list, we need system for this specific system_id
+
+        # Get system info directly
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT name FROM systems WHERE system_id = %s", (system_id,))
+        sys_row = cursor.fetchone()
+        cursor.close()
+
+        # Get planets for this system
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT s.system_id, s.name, p.planet_id, p.name as planet_name,
-                   p.owner_user_id, u.username as owner_name
-            FROM systems s
-            LEFT JOIN planets p ON s.system_id = p.system_id
+            SELECT p.planet_id, p.name as planet_name,
+                   u.username as owner_name
+            FROM planets p
             LEFT JOIN users u ON p.owner_user_id = u.user_id
-            WHERE s.system_id = %s
+            WHERE p.system_id = %s
         """, (system_id,))
-
         planets = cursor.fetchall()
-        system_info = SystemInfo(
+        cursor.close()
+
+        return SystemInfo(
             system_id=system_id,
-            name=planets[0]['name'] if planets else 'Unknown',
+            name=sys_row['name'] if sys_row else 'Unknown',
             planets=[
                 {
                     'planet_id': p['planet_id'],
@@ -623,8 +641,6 @@ def get_system_planets(system_id: int):
                 for p in planets
             ]
         )
-        cursor.close()
-        return system_info
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -637,34 +653,7 @@ def get_all_player_planets():
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT p.planet_id, p.name, s.name as system_name
-            FROM planets p
-            JOIN systems s ON p.system_id = s.system_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            ORDER BY s.name, p.planet_id
-        """)
-
-        player_planets = cursor.fetchall()
-        cursor.close()
-
-        planets_data = []
-        for planet in player_planets:
-            try:
-                flow = calculate_resource_flow(planet['planet_id'])
-                planets_data.append({
-                    'id': planet['planet_id'],
-                    'name': planet['name'],
-                    'system_name': planet['system_name'],
-                    'ownerName': 'You',
-                    'population': int(flow.get('taxable_income', 0)),  # Placeholder
-                    'resources': flow,
-                    'morale': 5
-                })
-            except Exception:
-                continue
-
+        planets_data = get_player_over_planets(db_conn=conn)
         return planets_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -678,11 +667,10 @@ def get_planet_details(planet_id: int):
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-
         # Get basic planet info
+        cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT p.planet_id, p.name, s.system_id, s.name as system_name,
+            SELECT p.planet_id, p.name, s.system_id,
                    u.username as owner_name, ps.population, ps.morale, ps.tax_rate
             FROM planets p
             JOIN systems s ON p.system_id = s.system_id
@@ -693,12 +681,13 @@ def get_planet_details(planet_id: int):
 
         row = cursor.fetchone()
         if not row:
+            cursor.close()
             raise HTTPException(status_code=404, detail="Planet not found")
 
         # Get infrastructure
         cursor.execute("""
             SELECT farming_stations, mining_stations, solar_satellites
-            FROM colonies c WHERE c.planet_id = %s
+            FROM colonies WHERE planet_id = %s
         """, (planet_id,))
 
         infra_row = cursor.fetchone()
@@ -708,39 +697,26 @@ def get_planet_details(planet_id: int):
             'solar_satellites': int(infra_row['solar_satellites']) if infra_row else 0
         }
 
-        # Get fleet at this planet
-        cursor.execute("""
-            SELECT ship_type, COUNT(*) as count
-            FROM ships s WHERE s.planet_id = %s AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            GROUP BY ship_type
-        """, (planet_id,))
-
-        fleet_list = cursor.fetchall()
-        fleet_items = [
-            FleetItem(ship_type=row['ship_type'], count=row['count'])
-            for row in fleet_list
-        ]
-
-        # Get population
-        cursor.execute("""SELECT population FROM planetary_stats WHERE planet_id = %s""", (planet_id,))
-        pop_row = cursor.fetchone()
-        population = int(pop_row['population']) if pop_row else 0
+        # Get fleet using game_engine helper
+        fleet_items_raw = ge_get_fleet_at_planet(planet_id, conn)
 
         cursor.close()
 
-        resources = calculate_resource_flow(planet_id)
+        resources = calculate_resource_flow(planet_id, conn)
 
         return PlanetInfo(
             planet_id=planet_id,
             name=row['name'],
             system_id=row['system_id'],
             owner_name=row['owner_name'],
-            population=population,
+            population=int(row['population']) if row['population'] else 0,
             morale=int(row['morale']) if row.get('morale') else 5,
             tax_rate=float(row['tax_rate']) if row.get('tax_rate') else 1.0,
             resources={k: float(v) for k, v in resources.items()},
             infrastructure=infrastructure
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -753,17 +729,8 @@ def get_fleet_at_planet(planet_id: int):
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT ship_type, COUNT(*) as count
-            FROM ships s WHERE s.planet_id = %s AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            GROUP BY ship_type
-        """, (planet_id,))
-
-        fleet_list = cursor.fetchall()
-        cursor.close()
-
-        return [FleetItem(ship_type=row['ship_type'], count=row['count']) for row in fleet_list]
+        fleet_items = ge_get_fleet_at_planet(planet_id, conn)
+        return [FleetItem(ship_type=item['ship_type'], count=item['count']) for item in fleet_items]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -776,26 +743,17 @@ def get_all_systems():
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT DISTINCT s.system_id, s.name
-            FROM systems s
-            JOIN planets p ON s.system_id = p.system_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            ORDER BY s.name
-        """)
-
-        systems = [
+        systems = ge_get_all_systems(db_conn=conn)
+        # Convert dicts to SystemInfo for consistency
+        result = [
             SystemInfo(
-                system_id=row['system_id'],
-                name=row['name'] or 'System',
-                planets=[]  # Empty array for NaN fix
+                system_id=s['system_id'],
+                name=s['name'],
+                planets=[]
             )
-            for row in cursor.fetchall()
+            for s in systems
         ]
-        cursor.close()
-
-        return systems if systems else [{'system_id': 1, 'name': 'System 1', 'planets': []}]
+        return result if result else [{'system_id': 1, 'name': 'System 1', 'planets': []}]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -880,110 +838,26 @@ def get_all_planets_dashboard():
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-
-        # Get all planets with their stats and resources
-        cursor.execute("""
-            SELECT
-                p.planet_id,
-                p.system_id,
-                p.name as planet_name,
-                u.username as owner_name,
-                ps.population,
-                ps.morale,
-                ps.tax_rate,
-                ps.food_level,
-                ps.mineral_level,
-                ps.energy_level,
-                ps.fuel_level
-            FROM supremacy_game.planets p
-            JOIN supremacy_game.users u ON p.owner_user_id = u.user_id
-            LEFT JOIN supremacy_game.planetary_stats ps ON p.planet_id = ps.planet_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-              AND (ps.planet_id IS NOT NULL OR 1=1)
-            ORDER BY p.system_id, p.name
-        """)
-
-        planets_data = []
-        for row in cursor.fetchall():
-            if row['planet_id']:
-                # Get infrastructure from colonies table
-                cursor.execute("""
-                    SELECT farming_stations, mining_stations, solar_satellites
-                    FROM supremacy_game.colonies WHERE planet_id = %s
-                """, (row['planet_id'],))
-                col_row = cursor.fetchone()
-                infra = {
-                    'farming_stations': col_row['farming_stations'] if col_row else 0,
-                    'mining_stations': col_row['mining_stations'] if col_row else 0,
-                    'solar_satellites': col_row['solar_satellites'] if col_row else 0
-                }
-
-                # Get purchased assets from planetary_assets table
-                cursor.execute("""
-                    SELECT asset_name, asset_type, base_cost
-                    FROM supremacy_game.planetary_assets
-                    WHERE planet_id = %s
-                """, (row['planet_id'],))
-                purchased = cursor.fetchall()
-
-                planets_data.append({
-                    'planet_id': row['planet_id'],
-                    'name': row['planet_name'],
-                    'system_id': row['system_id'],
-                    'owner_name': row['owner_name'],
-                    'population': row['population'] or 0,
-                    'morale': row['morale'] or 5,
-                    'tax_rate': row['tax_rate'] or 0.05,
-                    'resources': {
-                        'food': row['food_level'] or 0,
-                        'mineral': row['mineral_level'] or 0,
-                        'energy': row['energy_level'] or 0,
-                        'fuel': row['fuel_level'] or 0,
-                        'taxable_income': (row['population'] or 0) * (row['tax_rate'] or 0.05)
-                    },
-                    'infrastructure': infra,
-                    'fleet': [],  # Ships are loaded separately
-                    'purchased_assets': purchased  # Assets from planetary_assets table
-                })
-
-        cursor.close()
-
+        planets_data = get_dashboard_planets(db_conn=conn)
+        # Convert tuples to dicts for purchased_assets
+        for planet in planets_data:
+            if planet.get('purchased_assets'):
+                planet['purchased_assets'] = [dict(a) if isinstance(a, tuple) else a for a in planet['purchased_assets']]
         return planets_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/planets/{planet_id}/fleet", response_model=list)
-def get_all_planets_fleet():
-    """Get fleet for all player planets (for dashboard)."""
+def get_all_planets_fleet(planet_id: int):
+    """Get fleet for a planet (for dashboard)."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-
-        # Get fleet for each planet separately
-        fleet_map = {}
-        cursor.execute("""
-            SELECT planet_id, ship_type, COUNT(*) as count
-            FROM supremacy_game.ships
-            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            GROUP BY planet_id, ship_type
-            ORDER BY planet_id, ship_type
-        """)
-
-        for row in cursor.fetchall():
-            if row['planet_id'] not in fleet_map:
-                fleet_map[row['planet_id']] = []
-            fleet_map[row['planet_id']].append(FleetItem(
-                ship_type=row['ship_type'],
-                count=row['count']
-            ))
-
-        cursor.close()
-        return list(fleet_map.values())
+        fleet_items = ge_get_fleet_at_planet(planet_id, conn)
+        return [FleetItem(ship_type=item['ship_type'], count=item['count']) for item in fleet_items]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1060,12 +934,8 @@ def get_player_credits():
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-        row = cursor.fetchone()
-        cursor.close()
-
-        return {"credits": int(row[0]) if row else 0}
+        credits = ge_get_player_credits(db_conn=conn)
+        return {"credits": credits}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1080,33 +950,21 @@ def purchase_asset(request: PurchaseRequest):
     try:
         cursor = conn.cursor(dictionary=True)
 
-        # Get player credits
-        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-        credit_row = cursor.fetchone()
-        current_credits = int(credit_row['credits']) if credit_row else 0
+        # Get player credits via game_engine helper
+        current_credits = ge_get_player_credits(db_conn=conn)
 
-        # Check equipment_catalog first to avoid name collisions with assets_catalog
-        cursor.execute("""
-            SELECT name, category, base_cost FROM supremacy_game.equipment_catalog
-            WHERE name = %s
-        """, (request.asset_name,))
-        asset_row = cursor.fetchone()
-
-        # If not found in equipment, try assets_catalog (ships, infrastructure)
-        if not asset_row:
-            cursor.execute("""
-                SELECT name, category, base_cost FROM supremacy_game.assets_catalog
-                WHERE name = %s AND category IN ('Ship', 'Infrastructure')
-            """, (request.asset_name,))
-            asset_row = cursor.fetchone()
+        # Look up asset via game_engine helper (checks equipment_catalog first, then assets_catalog)
+        asset_row = get_asset_by_name(request.asset_name, conn)
 
         if not asset_row:
+            cursor.close()
             raise HTTPException(status_code=404, detail=f"Asset '{request.asset_name}' not found in catalog")
 
         cost = float(asset_row['base_cost'])
 
         # Check if player can afford it
         if current_credits < cost:
+            cursor.close()
             return {
                 "status": "success",
                 "message": f"Not enough credits! Need ${cost:,} but have ${current_credits:,}.",
@@ -1117,14 +975,12 @@ def purchase_asset(request: PurchaseRequest):
 
         # Terraformer is one-time only
         if request.asset_name == 'Terraformer':
-            cursor.execute("""
-                SELECT COUNT(*) FROM planetary_assets pa
-                JOIN planets p ON pa.planet_id = p.planet_id
-                WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                AND pa.asset_name = 'Terraformer'
-            """)
-            owned_count = cursor.fetchone()[0]
-            if owned_count > 0:
+            user_id_cursor = conn.cursor()
+            user_id_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+            uid = user_id_cursor.fetchone()[0]
+            user_id_cursor.close()
+            if has_player_owned_asset(uid, 'Terraformer', conn):
+                cursor.close()
                 return {
                     "status": "success",
                     "message": "You already own a Terraformer. It cannot be purchased again.",
@@ -1137,31 +993,17 @@ def purchase_asset(request: PurchaseRequest):
         cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
         conn.commit()
 
-        # Get the actual planet_id for assignment (use first owned planet or default to 1)
-        cursor.execute("""
-            SELECT planet_id FROM planets
-            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            ORDER BY planet_id LIMIT 1
-        """)
-        planet_row = cursor.fetchone()
-        planet_id = planet_row['planet_id'] if planet_row else 1
+        # Get the actual planet_id for assignment (use first owned planet or the one provided)
+        planet_id = get_first_owned_planet_id(db_conn=conn)
 
         # For infrastructure items, update the colonies table so they actually appear on the planet
         if asset_row['category'] == 'Infrastructure':
-            cursor.execute("""
-                SELECT planet_id FROM planets
-                WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                ORDER BY planet_id LIMIT 1
-            """)
-            colony_planet = cursor.fetchone()
-            target_planet_id = colony_planet['planet_id'] if colony_planet else planet_id
-
             if request.asset_name == 'EnergySatellite':
                 cursor.execute("""
                     INSERT INTO colonies (planet_id, solar_satellites)
                     VALUES (%s, 1)
                     ON DUPLICATE KEY UPDATE solar_satellites = solar_satellites + 1
-                """, (target_planet_id,))
+                """, (planet_id,))
             elif request.asset_name == 'Terraformer':
                 cursor.execute("""
                     INSERT INTO colonies (planet_id, farming_stations, solar_satellites)
@@ -1169,14 +1011,14 @@ def purchase_asset(request: PurchaseRequest):
                     ON DUPLICATE KEY UPDATE
                         farming_stations = farming_stations + 1,
                         solar_satellites = solar_satellites + 1
-                """, (target_planet_id,))
+                """, (planet_id,))
 
-        # Insert asset into player's inventory/assets table
         # Determine asset_type: equipment items get 'Equipment' type regardless of their catalog category
         catalog_type = asset_row['category']
         if catalog_type in ('Armor', 'Weapon'):
             catalog_type = 'Equipment'
 
+        # Insert asset into player's inventory/assets table
         cursor.execute("""
             INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
             VALUES (%s, %s, %s, 1, %s)
@@ -1185,9 +1027,7 @@ def purchase_asset(request: PurchaseRequest):
         conn.commit()
 
         # Get new credit balance
-        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-        credit_row = cursor.fetchone()
-        new_credits = int(credit_row['credits']) if credit_row else 0
+        new_credits = ge_get_player_credits(db_conn=conn)
 
         cursor.close()
 
@@ -1198,6 +1038,8 @@ def purchase_asset(request: PurchaseRequest):
             "asset_name": request.asset_name,
             "cost": cost
         }
+    except HTTPException:
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1214,18 +1056,17 @@ def purchase_equipment(request: PurchaseRequest):
         cursor = conn.cursor(dictionary=True)
 
         # Get player credits
-        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-        credit_row = cursor.fetchone()
-        current_credits = int(credit_row['credits']) if credit_row else 0
+        current_credits = ge_get_player_credits(db_conn=conn)
 
         # Check if equipment exists
         cursor.execute("""
-            SELECT name, category, base_cost, strength_value FROM supremacy_game.equipment_catalog
+            SELECT name, category, base_cost, strength_value FROM equipment_catalog
             WHERE name = %s
         """, (request.asset_name,))
 
         row = cursor.fetchone()
         if not row:
+            cursor.close()
             raise HTTPException(status_code=404, detail=f"Equipment '{request.asset_name}' not found in catalog")
 
         cost = int(row['base_cost'])
@@ -1233,6 +1074,7 @@ def purchase_equipment(request: PurchaseRequest):
 
         # Check if player can afford it
         if current_credits < cost:
+            cursor.close()
             return {
                 "status": "success",
                 "message": f"Not enough credits! Need ${cost:,} but have ${current_credits:,}.",
@@ -1241,21 +1083,14 @@ def purchase_equipment(request: PurchaseRequest):
                 "cost": cost
             }
 
-        # Deduct credits from player (transactional)
+        # Deduct credits from player
         cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
         conn.commit()
 
         # Get the actual planet_id for assignment
-        cursor.execute("""
-            SELECT planet_id FROM planets
-            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            ORDER BY planet_id LIMIT 1
-        """)
-        planet_row = cursor.fetchone()
-        planet_id = planet_row['planet_id'] if planet_row else 1
+        planet_id = get_first_owned_planet_id(db_conn=conn)
 
         # Insert equipment into player's inventory/assets table
-        # Store as 'Equipment' so UI can display it in the equipment filter
         cursor.execute("""
             INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
             VALUES (%s, %s, %s, 1, %s)
@@ -1264,9 +1099,7 @@ def purchase_equipment(request: PurchaseRequest):
         conn.commit()
 
         # Get new credit balance
-        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-        credit_row = cursor.fetchone()
-        new_credits = int(credit_row['credits']) if credit_row else 0
+        new_credits = ge_get_player_credits(db_conn=conn)
 
         cursor.close()
 
@@ -1278,6 +1111,8 @@ def purchase_equipment(request: PurchaseRequest):
             "cost": cost,
             "strength": strength
         }
+    except HTTPException:
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1310,16 +1145,7 @@ def get_player_assets():
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
     try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT pa.asset_name, pa.asset_type, pa.quantity, pa.base_cost, pa.planet_id, p.name as planet_name
-            FROM supremacy_game.planetary_assets pa
-            JOIN supremacy_game.planets p ON pa.planet_id = p.planet_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM supremacy_game.users WHERE username = 'Player')
-            ORDER BY pa.asset_type, pa.asset_name
-        """)
-        rows = cursor.fetchall()
-        cursor.close()
+        rows = ge_get_player_assets(db_conn=conn)
         return rows
     finally:
         conn.close()
@@ -1355,18 +1181,6 @@ def resolve_battle(request: CombatRequest):
     except Exception as e:
         print(f"API error during battle: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
-def battle_planet(request: CombatRequest):
-    """Resolves combat between two planets and updates ownership transactionally."""
-    try:
-        result = resolve_combat(
-            attacker_planet_id=request.attacker_planet_id,
-            defender_planet_id=request.defender_planet_id
-        )
-        return {"status": "Combat Resolved", "message": result}
-
-    except Exception as e:
-        print(f"API error during combat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 
 @app.post("/api/turn/advance")
@@ -1374,33 +1188,24 @@ def advance_turn():
     """Triggers the full game loop for all players and advances the AI turn."""
     try:
         print("--- Advancing Turn Start ---")
-
-        # Get all active planets from DB
         conn = get_db_connection()
-        if conn:
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT p.planet_id FROM planets p
-                WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            """)
-            active_planets = [row['planet_id'] for row in cursor.fetchall()]
-            cursor.close()
-        else:
-            active_planets = [1]
 
-        # Calculate resource flow for each active planet
-        for planet_id in active_planets[:5]:  # Limit to first 5 planets
-            try:
-                flow = calculate_resource_flow(planet_id)
-                print(f"Calculated flow for {planet_id}: {flow}")
-            except Exception as e:
-                print(f"Error calculating flow for {planet_id}: {e}")
+        if conn:
+            # Use run_turn() which processes ALL planets via stored procedure or legacy method
+            turn_result = run_turn(user_id=1, db_conn=conn)
+            print(f"Turn result: {turn_result}")
+        else:
+            turn_result = {"turn_complete": False, "message": "No database connection"}
 
         # AI Opponent Turn
         ai_result = ai_opponent_turn(ai_user_id=99)
         print(f"AI Opponent Turn executed: {ai_result}")
 
-        return {"status": "Success", "message": "Turn advanced successfully. All resource flows and AI actions processed."}
+        return {
+            "status": "Success" if turn_result.get("turn_complete") else "Failed",
+            "message": turn_result.get("message", "Turn processing complete."),
+            "turn_result": turn_result,
+        }
 
     except Exception as e:
         print(f"API error during turn advance: {str(e)}")
@@ -1419,44 +1224,8 @@ def get_debug_player_planets():
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT p.planet_id, p.name, p.system_id,
-                   u.username as owner_name,
-                   COALESCE(ps.population, 0) as population,
-                   COALESCE(ps.food_level, 0) as food_level,
-                   COALESCE(ps.energy_level, 0) as energy_level,
-                   COALESCE(ps.fuel_level, 0) as fuel_level
-            FROM supremacy_game.planets p
-            LEFT JOIN supremacy_game.planetary_stats ps ON p.planet_id = ps.planet_id
-            LEFT JOIN supremacy_game.users u ON p.owner_user_id = u.user_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM supremacy_game.users WHERE username = 'Player')
-        """)
-
-        planets = cursor.fetchall()
-        cursor.close()
-
-        return [
-            {
-                "planet_id": row['planet_id'],
-                "name": row['name'],
-                "population": int(row['population']),
-                "resources": {
-                    "food_level": float(row['food_level']),
-                    "energy_level": float(row['energy_level']),
-                    "fuel_level": float(row['fuel_level']),
-                },
-                "fleet": [],
-                "infrastructure": {
-                    "farming_stations": 0,
-                    "mining_stations": 0,
-                    "solar_satellites": 0
-                },
-                "system_id": row['system_id'],
-                "owner_name": row['owner_name'] or 'Neutral'
-            }
-            for row in planets
-        ]
+        planets = ge_get_debug_player_planets(db_conn=conn)
+        return planets
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1469,27 +1238,18 @@ def adjust_resource_level(request: DebugLevelChange):
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor()
+        success = adjust_resource_level(
+            planet_id=request.planet_id,
+            resource_type=request.resource_type,
+            new_value=float(request.new_value),
+            db_conn=conn
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to adjust resource level")
 
-        mapping = {
-            'population': 'SET population = %s',
-            'food_level': 'SET food_level = %s',
-            'energy_level': 'SET energy_level = %s',
-            'fuel_level': 'SET fuel_level = %s'
-        }
-
-        query = """
-            UPDATE supremacy_game.planetary_stats
-            SET population = %s, food_level = %s, energy_level = %s, fuel_level = %s
-            WHERE planet_id = %s
-        """
-
-        new_value = float(request.new_value)
-        cursor.execute(query, (new_value, new_value, new_value, new_value, request.planet_id))
-        conn.commit()
-        cursor.close()
-
-        return {"status": "success", "message": f"Adjusted {request.resource_type} for planet {request.planet_id} to {new_value}"}
+        return {"status": "success", "message": f"Adjusted {request.resource_type} for planet {request.planet_id} to {float(request.new_value)}"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1502,11 +1262,12 @@ def add_player_credits(credits_to_add: int = 10000):
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET credits = credits + %s WHERE username = 'Player'", (credits_to_add,))
-        conn.commit()
-        cursor.close()
+        success = add_credits_to_player(credits_to_add, db_conn=conn)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to add credits")
 
         return {"status": "success", "message": f"Added {credits_to_add} credits to Player"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

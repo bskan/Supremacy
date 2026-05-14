@@ -2,18 +2,22 @@
 """
 Installation script for Supremacy Game stored procedures.
 Run: python install_stored_procs.py
+
+Uses mysql CLI to install (DELIMITER is a client-side command).
 """
 
 import mysql.connector
+import subprocess
+import sys
+import os
 
 DB_CONFIG = {
     "host": "localhost",
     "user": "supremacy",
-    "password": "",  # Empty password per your setup
+    "password": "",
     "database": "supremacy_game"
 }
 
-# Stored procedure SQL content - refactored for MariaDB compatibility
 PROCEDURE_SQL = """
 DROP PROCEDURE IF EXISTS process_player_turns_batch;
 
@@ -21,30 +25,19 @@ DELIMITER //
 
 CREATE PROCEDURE process_player_turns_batch(IN p_user_id INT)
 BEGIN
-    -- Process turn for all player planets in a single UPDATE statement
-    -- Calculates and applies food, energy, fuel, and population changes
-
     UPDATE planetary_stats ps
     JOIN planets p ON ps.planet_id = p.planet_id
     LEFT JOIN colonies c ON p.planet_id = c.planet_id
-    WHERE p.owner_user_id = p_user_id
-
     SET
-        -- Food: production from farms minus population consumption
         food_level = FLOOR(ps.food_level + 15 * COALESCE(c.farming_stations, 0) - ps.population * 0.5),
-        -- Energy: solar satellites output minus machinery consumption
         energy_level = FLOOR(ps.energy_level + 12 * COALESCE(c.solar_satellites, 0) - ps.population * 0.3),
-        -- Fuel: from mineral byproducts
         fuel_level = FLOOR(ps.fuel_level + 8 * COALESCE(c.mining_stations, 0)),
-
-        -- Population: growth based on morale when food adequate (>= -20), starvation decline otherwise
         population = CASE
             WHEN ps.food_level >= -20 THEN
-                MAX(0, ps.population + ROUND(ps.population * (COALESCE(ps.morale, 5) / 10.0) * 0.005, 0))
+                GREATEST(0, ps.population + ROUND(ps.population * (COALESCE(ps.morale, 5) / 10.0) * 0.005, 0))
             ELSE
-                MAX(0, ps.population - ROUND(ps.population * ABS(ps.food_level) / 25.0, 0))
+                GREATEST(0, ps.population - ROUND(ps.population * ABS(ps.food_level) / 25.0, 0))
             END;
-
 END//
 
 DELIMITER ;
@@ -54,31 +47,44 @@ DELIMITER ;
 def main():
     print("Installing stored procedures...")
 
-    conn = mysql.connector.connect(**DB_CONFIG)
-    cursor = conn.cursor()
+    # Write procedure SQL to a temp file (DELIMITER requires mysql CLI)
+    sql_file = "/tmp/_supremacy_procs.sql"
+    with open(sql_file, 'w') as f:
+        f.write(PROCEDURE_SQL)
 
     try:
-        cursor.execute(PROCEDURE_SQL)
-        conn.commit()
+        cmd = [
+            "mysql",
+            f"-h{DB_CONFIG['host']}", f"-u{DB_CONFIG['user']}",
+            f"-p{DB_CONFIG['password']}", f"{DB_CONFIG['database']}",
+            f"<{sql_file}"
+        ]
+        result = subprocess.run(" ".join(cmd), shell=True, capture_output=True, text=True)
 
-        # Verify procedure was created
+        if result.returncode != 0:
+            print(f"Error: {result.stderr.strip()}")
+            sys.exit(1)
+
+        # Verify procedure was created via mysql-connector
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cursor = conn.cursor()
         cursor.execute("SHOW PROCEDURE STATUS WHERE Db = 'supremacy_game'")
         procedures = cursor.fetchall()
-
-        print(f"\nStored procedures installed successfully!")
-        print(f"Found {len(procedures)} procedure(s):")
-        for proc in procedures:
-            if isinstance(proc, dict):
-                print(f"  - {proc.get('Name', 'N/A')}")
-            else:
-                print(f"  - {proc[0]}")
-
-    except mysql.connector.Error as e:
-        print(f"Error: {e}")
-        conn.rollback()
-    finally:
         cursor.close()
         conn.close()
+
+        names = [p[1] for p in procedures]
+        print(f"\nStored procedures installed successfully!")
+        print(f"Found {len(names)} procedure(s): {names}")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error running mysql CLI: {e}")
+        sys.exit(1)
+    finally:
+        try:
+            os.unlink(sql_file)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

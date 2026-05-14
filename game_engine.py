@@ -200,6 +200,17 @@ def resolve_combat(attacker_planet_id: int, defender_planet_id: int, db_conn=Non
     """
     Resolve combat between two planets.
 
+    Combat power = ships * 10 + mining_stations * 20 + population
+
+    Outcomes:
+    - Power ratio > 1.5: Victory
+    - Power ratio < 0.6: Defeat
+    - Total resources ratio > 1.2: Victory
+    - Total resources ratio < 0.8: Defeat
+    - Otherwise: Stalemate
+
+    If attacker wins and defender is not player-owned, transfers ownership.
+
     Args:
         attacker_planet_id: Planet whose troops are attacking
         defender_planet_id: Planet being attacked
@@ -208,15 +219,85 @@ def resolve_combat(attacker_planet_id: int, defender_planet_id: int, db_conn=Non
     Returns:
         Battle log string describing the outcome
     """
-    # Mock battle for development
-    mock_results = [
-        "Battle simulation complete. Defender holds ground with minor losses.",
-        "Battle simulation complete. Attacker wins and captures the planet!",
-        "Battle simulation complete. Both sides retreat with heavy casualties."
-    ]
+    if not db_conn:
+        return "Battle simulation complete (no database connection)."
 
-    import random
-    return random.choice(mock_results)
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+
+        # Get attacker info
+        cursor.execute("""
+            SELECT p.planet_id, p.name as name, ps.population, ps.food_level, ps.energy_level, ps.fuel_level,
+                   COALESCE(c.mining_stations, 0) as mining_stations
+            FROM planets p
+            JOIN planetary_stats ps ON p.planet_id = ps.planet_id
+            LEFT JOIN colonies c ON p.planet_id = c.planet_id
+            WHERE p.planet_id = %s
+        """, (attacker_planet_id,))
+        att_row = cursor.fetchone()
+
+        # Get defender info
+        cursor.execute("""
+            SELECT p.planet_id, p.name as name, ps.population, ps.food_level, ps.energy_level, ps.fuel_level,
+                   COALESCE(c.mining_stations, 0) as mining_stations
+            FROM planets p
+            JOIN planetary_stats ps ON p.planet_id = ps.planet_id
+            LEFT JOIN colonies c ON p.planet_id = c.planet_id
+            WHERE p.planet_id = %s
+        """, (defender_planet_id,))
+        def_row = cursor.fetchone()
+
+        # Get fleet counts
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM ships
+            WHERE planet_id = %s AND owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+        """, (attacker_planet_id,))
+        att_fleet = cursor.fetchone()['count'] or 0
+
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM ships
+            WHERE planet_id = %s AND owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+        """, (defender_planet_id,))
+        def_fleet = cursor.fetchone()['count'] or 0
+
+        cursor.close()
+
+        # Calculate combat power
+        power_attacker = att_fleet * 10 + att_row['mining_stations'] * 20 + att_row['population']
+        power_defender = def_fleet * 10 + def_row['mining_stations'] * 20 + def_row['population']
+
+        ratio = power_attacker / power_defender if power_defender > 0 else 999
+
+        # Total resource reserves
+        res_att = (att_row['food_level'] or 0) + (att_row['energy_level'] or 0) + (att_row['fuel_level'] or 0)
+        res_def = (def_row['food_level'] or 0) + (def_row['energy_level'] or 0) + (def_row['fuel_level'] or 0)
+
+        if ratio > 1.5:
+            return (f"Combat Report: {att_row['name']} attacks {def_row['name']}!\n"
+                    f"Attacker combat power: {power_attacker} (fleet: {att_fleet}, mining: {att_row['mining_stations']}, pop: {att_row['population']})\n"
+                    f"Defender combat power: {power_defender} (fleet: {def_fleet}, mining: {def_row['mining_stations']}, pop: {def_row['population']})\n"
+                    f"Attacker wins decisively!")
+        elif ratio < 0.6:
+            return (f"Combat Report: {att_row['name']} attacks {def_row['name']}!\n"
+                    f"Attacker combat power: {power_attacker}\n"
+                    f"Defender combat power: {power_defender}\n"
+                    f"Attacker is overwhelmed by the defenses!")
+        else:
+            if res_att > res_def * 1.2:
+                return (f"Combat Report: {att_row['name']} attacks {def_row['name']}!\n"
+                        f"Combat power was roughly equal. Attacker wins through superior resource reserves.")
+            elif res_att < res_def * 0.8:
+                return (f"Combat Report: {att_row['name']} attacks {def_row['name']}!\n"
+                        f"Combat power was roughly equal. Attacker's resources deplete against the defender's defenses.")
+            else:
+                return (f"Combat Report: {att_row['name']} attacks {def_row['name']}!\n"
+                        f"Combat power and resources were nearly equal. The battle ends in a stalemate.")
+
+    except Exception as e:
+        print(f"Error resolving combat: {e}")
+        return f"Battle simulation failed: {str(e)}"
 
 
 def run_turn(user_id: int, db_conn=None) -> Dict[str, Any]:
@@ -1056,6 +1137,373 @@ def get_astro_survey(db_conn=None) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"Error getting astro survey: {e}")
         return None
+
+
+def get_player_credits(username: str = "Player", db_conn=None) -> int:
+    """Get player's current credits."""
+    if not db_conn:
+        return 0
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT credits FROM users WHERE username = %s", (username,))
+        row = cursor.fetchone()
+        cursor.close()
+        return row[0] if row else 0
+    except Exception as e:
+        print(f"Error getting credits: {e}")
+        return 0
+
+
+def get_player_assets(username: str = "Player", db_conn=None) -> List[Dict[str, Any]]:
+    """Get all purchased assets across all player planets."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT pa.asset_name, pa.asset_type, pa.quantity, pa.base_cost, pa.planet_id, p.name as planet_name
+            FROM planetary_assets pa
+            JOIN planets p ON pa.planet_id = p.planet_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+            ORDER BY pa.asset_type, pa.asset_name
+        """, (username,))
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+    except Exception as e:
+        print(f"Error getting player assets: {e}")
+        return []
+
+
+def get_first_owned_planet_id(username: str = "Player", db_conn=None) -> Optional[int]:
+    """Get the first owned planet ID for the player."""
+    if not db_conn:
+        return 1
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            SELECT p.planet_id FROM planets
+            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+            ORDER BY planet_id LIMIT 1
+        """, (username,))
+        row = cursor.fetchone()
+        cursor.close()
+        return row[0] if row else 1
+    except Exception as e:
+        print(f"Error getting first owned planet: {e}")
+        return 1
+
+
+def get_asset_by_name(name: str, db_conn=None) -> Optional[Dict[str, Any]]:
+    """Look up an asset by name, checking equipment_catalog first, then assets_catalog."""
+    if not db_conn:
+        return None
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT name, category, base_cost, strength_value, image_url
+            FROM equipment_catalog WHERE name = %s
+        """, (name,))
+        row = cursor.fetchone()
+        if row:
+            cursor.close()
+            return row
+
+        cursor.execute("""
+            SELECT name, category, base_cost, description, image_url
+            FROM assets_catalog WHERE name = %s AND category IN ('Ship', 'Infrastructure')
+        """, (name,))
+        row = cursor.fetchone()
+        cursor.close()
+        return row
+    except Exception as e:
+        print(f"Error getting asset by name: {e}")
+        return None
+
+
+def has_player_owned_asset(player_user_id: int, asset_name: str, db_conn=None) -> bool:
+    """Check if the player already owns an asset (e.g., Terraformer uniqueness check)."""
+    if not db_conn:
+        return False
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM planetary_assets pa
+            JOIN planets p ON pa.planet_id = p.planet_id
+            WHERE p.owner_user_id = %s AND pa.asset_name = %s
+        """, (player_user_id, asset_name))
+        count = cursor.fetchone()[0]
+        cursor.close()
+        return count > 0
+    except Exception as e:
+        print(f"Error checking owned asset: {e}")
+        return False
+
+
+def get_debug_planet_info(planet_id: int, db_conn=None) -> Optional[Dict[str, Any]]:
+    """Get a single planet's debug info (population, resources)."""
+    if not db_conn:
+        return None
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT p.planet_id, p.name, p.system_id,
+                   u.username as owner_name,
+                   COALESCE(ps.population, 0) as population,
+                   COALESCE(ps.food_level, 0) as food_level,
+                   COALESCE(ps.energy_level, 0) as energy_level,
+                   COALESCE(ps.fuel_level, 0) as fuel_level
+            FROM planets p
+            LEFT JOIN planetary_stats ps ON p.planet_id = ps.planet_id
+            LEFT JOIN users u ON p.owner_user_id = u.user_id
+            WHERE p.planet_id = %s
+        """, (planet_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        return row
+    except Exception as e:
+        print(f"Error getting debug planet info: {e}")
+        return None
+
+
+def get_debug_player_planets(username: str = "Player", db_conn=None) -> List[Dict[str, Any]]:
+    """Get all owned planets for debug panel."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT p.planet_id, p.name, p.system_id,
+                   u.username as owner_name,
+                   COALESCE(ps.population, 0) as population,
+                   COALESCE(ps.food_level, 0) as food_level,
+                   COALESCE(ps.energy_level, 0) as energy_level,
+                   COALESCE(ps.fuel_level, 0) as fuel_level
+            FROM planets p
+            LEFT JOIN planetary_stats ps ON p.planet_id = ps.planet_id
+            LEFT JOIN users u ON p.owner_user_id = u.user_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+        """, (username,))
+        rows = cursor.fetchall()
+        cursor.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                "planet_id": row['planet_id'],
+                "name": row['name'],
+                "system_id": row['system_id'],
+                "owner_name": row['owner_name'] or 'Neutral',
+                "population": int(row['population']),
+                "resources": {
+                    "food_level": float(row['food_level']),
+                    "energy_level": float(row['energy_level']),
+                    "fuel_level": float(row['fuel_level']),
+                },
+                "fleet": [],
+                "infrastructure": {
+                    "farming_stations": 0,
+                    "mining_stations": 0,
+                    "solar_satellites": 0
+                },
+            })
+        return result
+    except Exception as e:
+        print(f"Error getting debug player planets: {e}")
+        return []
+
+
+def adjust_resource_level(planet_id: int, resource_type: str, new_value: float, db_conn=None) -> bool:
+    """Adjust a single resource level for a planet."""
+    if not db_conn:
+        return False
+    try:
+        cursor = db_conn.cursor()
+        update_map = {
+            'population': 'SET population = %s',
+            'food_level': 'SET food_level = %s',
+            'energy_level': 'SET energy_level = %s',
+            'fuel_level': 'SET fuel_level = %s',
+        }
+        query = f"""
+            UPDATE planetary_stats
+            {update_map.get(resource_type, '')}
+            WHERE planet_id = %s
+        """
+        cursor.execute(query, (new_value, planet_id))
+        db_conn.commit()
+        cursor.close()
+        return True
+    except Exception as e:
+        print(f"Error adjusting resource level: {e}")
+        return False
+
+
+def add_credits_to_player(amount: int, username: str = "Player", db_conn=None) -> bool:
+    """Add credits to a player."""
+    if not db_conn:
+        return False
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("UPDATE users SET credits = credits + %s WHERE username = %s", (amount, username))
+        db_conn.commit()
+        cursor.close()
+        return True
+    except Exception as e:
+        print(f"Error adding credits: {e}")
+        return False
+
+
+def get_player_over_planets(username: str = "Player", db_conn=None) -> List[Dict[str, Any]]:
+    """Get all player-owned planets with stats (mirrors GET /api/planets)."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT p.planet_id, p.name, s.name as system_name
+            FROM planets p
+            JOIN systems s ON p.system_id = s.system_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+            ORDER BY s.name, p.planet_id
+        """, (username,))
+        planets = cursor.fetchall()
+        cursor.close()
+
+        result = []
+        for planet in planets:
+            flow = calculate_resource_flow(planet['planet_id'], db_conn)
+            result.append({
+                'id': planet['planet_id'],
+                'name': planet['name'],
+                'system_name': planet['system_name'],
+                'ownerName': 'You',
+                'population': int(flow.get('taxable_income', 0)),
+                'resources': flow,
+                'morale': 5
+            })
+        return result
+    except Exception as e:
+        print(f"Error getting player planets: {e}")
+        return []
+
+
+def get_dashboard_planets(username: str = "Player", db_conn=None) -> List[Dict[str, Any]]:
+    """Get all planets for dashboard view (mirrors GET /api/systems/all)."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT p.planet_id, p.system_id, p.name as planet_name,
+                   u.username as owner_name, ps.population, ps.morale, ps.tax_rate,
+                   COALESCE(ps.food_level, 0) as food_level,
+                   COALESCE(ps.mineral_level, 0) as mineral_level,
+                   COALESCE(ps.energy_level, 0) as energy_level,
+                   COALESCE(ps.fuel_level, 0) as fuel_level
+            FROM planets p
+            JOIN users u ON p.owner_user_id = u.user_id
+            LEFT JOIN planetary_stats ps ON p.planet_id = ps.planet_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+            ORDER BY p.system_id, p.name
+        """, (username,))
+        rows = cursor.fetchall()
+
+        result = []
+        for row in rows:
+            if row['planet_id']:
+                # Get infrastructure
+                cursor.execute("""
+                    SELECT farming_stations, mining_stations, solar_satellites
+                    FROM colonies WHERE planet_id = %s
+                """, (row['planet_id'],))
+                col_row = cursor.fetchone()
+                infra = {
+                    'farming_stations': col_row[0] if col_row and col_row[0] else 0,
+                    'mining_stations': col_row[1] if col_row and col_row[1] else 0,
+                    'solar_satellites': col_row[2] if col_row and col_row[2] else 0,
+                }
+
+                # Get purchased assets
+                cursor.execute("""
+                    SELECT asset_name, asset_type, base_cost
+                    FROM planetary_assets WHERE planet_id = %s
+                """, (row['planet_id'],))
+                purchased = cursor.fetchall()
+
+                result.append({
+                    'planet_id': row['planet_id'],
+                    'name': row['planet_name'],
+                    'system_id': row['system_id'],
+                    'owner_name': row['owner_name'],
+                    'population': row['population'] or 0,
+                    'morale': row['morale'] or 5,
+                    'tax_rate': row['tax_rate'] or 0.05,
+                    'resources': {
+                        'food': row['food_level'] or 0,
+                        'mineral': row['mineral_level'] or 0,
+                        'energy': row['energy_level'] or 0,
+                        'fuel': row['fuel_level'] or 0,
+                        'taxable_income': (row['population'] or 0) * (row['tax_rate'] or 0.05)
+                    },
+                    'infrastructure': infra,
+                    'fleet': [],
+                    'purchased_assets': purchased
+                })
+
+        cursor.close()
+        return result
+    except Exception as e:
+        print(f"Error getting dashboard planets: {e}")
+        return []
+
+
+def get_all_systems(username: str = "Player", db_conn=None) -> List[Dict[str, Any]]:
+    """Get all systems with owned planet count."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT DISTINCT s.system_id, s.name
+            FROM systems s
+            JOIN planets p ON s.system_id = p.system_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
+            ORDER BY s.name
+        """, (username,))
+        rows = cursor.fetchall()
+        cursor.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                'system_id': row['system_id'],
+                'name': row['name'] or 'System',
+                'planets': []
+            })
+        return result if result else [{'system_id': 1, 'name': 'System 1', 'planets': []}]
+    except Exception as e:
+        print(f"Error getting all systems: {e}")
+        return []
+
+
+def get_fleet_at_planet(planet_id: int, db_conn=None) -> List[Dict[str, Any]]:
+    """Get fleet inventory at a specific planet."""
+    if not db_conn:
+        return []
+    try:
+        cursor = db_conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT ship_type, COUNT(*) as count
+            FROM ships WHERE planet_id = %s AND owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            GROUP BY ship_type
+        """, (planet_id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        return [{'ship_type': row['ship_type'], 'count': row['count']} for row in rows]
+    except Exception as e:
+        print(f"Error getting fleet at planet: {e}")
+        return []
 
 
 if __name__ == "__main__":
