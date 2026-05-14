@@ -21,9 +21,11 @@ const Dashboard: React.FC = () => {
     const [planets, setPlanets] = useState<any[]>([]); // Array of planet state objects from database
     const [message, setMessage] = useState("");
     const [playerCredits, setPlayerCredits] = useState<number | null>(null);
+    const [assetCount, setAssetCount] = useState<number | null>(null);
 
     useEffect(() => {
         loadPlayerCredits();
+        loadAssetCount();
     }, []);
 
     const loadPlayerCredits = async () => {
@@ -35,6 +37,18 @@ const Dashboard: React.FC = () => {
             }
         } catch (error) {
             console.error('Error loading player credits:', error);
+        }
+    };
+
+    const loadAssetCount = async () => {
+        try {
+            const res = await fetch('/api/player/assets');
+            if (res.ok) {
+                const data = await res.json();
+                setAssetCount(Array.isArray(data) ? data.length : 0);
+            }
+        } catch (error) {
+            console.error('Error loading asset count:', error);
         }
     };
 
@@ -114,9 +128,12 @@ const Dashboard: React.FC = () => {
         <div className="dashboard-container">
             <h1>Planetary System Dashboard</h1>
 
-            {/* Credits Display */}
+            {/* Credits & Assets Display */}
             <div className="credits-display">
-                &#8363; {formatNumber(playerCredits || 0)} Credits Available
+                <span>&#8363; {formatNumber(playerCredits || 0)} Credits</span>
+                {assetCount !== null && (
+                    <span>&#128722; {assetCount} Assets</span>
+                )}
             </div>
 
             {/* Global Status Message Box */}
@@ -157,7 +174,12 @@ const Dashboard: React.FC = () => {
 
 // Component to display individual planet info with full database data
 const PlanetCard: React.FC<{ planet: any, onMove: () => void }> = ({ planet, onMove }) => {
+    const purchased = planet.purchased_assets || [];
+    const ships = purchased.filter((a: any) => a.asset_type === 'Ship');
+    const infra = purchased.filter((a: any) => a.asset_type === 'Infrastructure');
+    const equipment = purchased.filter((a: any) => a.asset_type === 'Equipment');
     const owned = planet.owner_name === 'Player';
+    const planetTotal = purchased.reduce((s: number, a: any) => s + (a.quantity || 1), 0);
 
     return (
         <div className={`planet-card ${owned ? 'owned' : ''}`} style={{ cursor: 'pointer' }}>
@@ -204,6 +226,36 @@ const PlanetCard: React.FC<{ planet: any, onMove: () => void }> = ({ planet, onM
                             </span>
                         ))}
                     </div>
+                </div>
+            )}
+
+            {/* Purchased Assets */}
+            {planetTotal > 0 && (
+                <div className="purchased-assets">
+                    {ships.length > 0 && (
+                        <div className="purchased-section">
+                            <strong>&#9851; Ships:</strong>
+                            {ships.map((a: any, i: number) => (
+                                <span key={i} className="purchased-item">{a.asset_name} x{a.quantity}</span>
+                            ))}
+                        </div>
+                    )}
+                    {infra.length > 0 && (
+                        <div className="purchased-section">
+                            <strong>&#128736; Infrastructure:</strong>
+                            {infra.map((a: any, i: number) => (
+                                <span key={i} className="purchased-item">{a.asset_name} x{a.quantity}</span>
+                            ))}
+                        </div>
+                    )}
+                    {equipment.length > 0 && (
+                        <div className="purchased-section">
+                            <strong>&#128663; Equipment:</strong>
+                            {equipment.map((a: any, i: number) => (
+                                <span key={i} className="purchased-item">{a.asset_name} x{a.quantity}</span>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 

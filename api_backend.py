@@ -919,6 +919,14 @@ def get_all_planets_dashboard():
                     'solar_satellites': col_row['solar_satellites'] if col_row else 0
                 }
 
+                # Get purchased assets from planetary_assets table
+                cursor.execute("""
+                    SELECT asset_name, asset_type, base_cost
+                    FROM supremacy_game.planetary_assets
+                    WHERE planet_id = %s
+                """, (row['planet_id'],))
+                purchased = cursor.fetchall()
+
                 planets_data.append({
                     'planet_id': row['planet_id'],
                     'name': row['planet_name'],
@@ -935,7 +943,8 @@ def get_all_planets_dashboard():
                         'taxable_income': (row['population'] or 0) * (row['tax_rate'] or 0.05)
                     },
                     'infrastructure': infra,
-                    'fleet': []  # Ships are loaded separately
+                    'fleet': [],  # Ships are loaded separately
+                    'purchased_assets': purchased  # Assets from planetary_assets table
                 })
 
         cursor.close()
@@ -1063,7 +1072,7 @@ def get_player_credits():
 
 @app.post("/api/marketplace/purchase")
 def purchase_asset(request: PurchaseRequest):
-    """Purchase an asset (CLI: Purchase Assets action)."""
+    """Purchase an asset and add it to player's fleet/inventory."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1071,31 +1080,24 @@ def purchase_asset(request: PurchaseRequest):
     try:
         cursor = conn.cursor(dictionary=True)
 
-        # Get planet info
+        # Get player credits
         cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
         credit_row = cursor.fetchone()
         current_credits = int(credit_row['credits']) if credit_row else 0
 
-        # Check if item exists in catalog
+        # Check equipment_catalog first to avoid name collisions with assets_catalog
         cursor.execute("""
-            SELECT base_cost, category FROM supremacy_game.assets_catalog
-            WHERE name = %s OR name IN (SELECT name FROM equipment_catalog)
+            SELECT name, category, base_cost FROM supremacy_game.equipment_catalog
+            WHERE name = %s
         """, (request.asset_name,))
+        asset_row = cursor.fetchone()
 
-        rows = cursor.fetchall()
-
-        # Look in assets_catalog first
-        asset_row = None
-        for row in rows:
-            if hasattr(row, 'category'):  # Skip duplicate from equipment query
-                break
-        else:
-            # Check equipment_catalog separately for military items
+        # If not found in equipment, try assets_catalog (ships, infrastructure)
+        if not asset_row:
             cursor.execute("""
-                SELECT base_cost, category, name FROM supremacy_game.equipment_catalog
-                WHERE name = %s
+                SELECT name, category, base_cost FROM supremacy_game.assets_catalog
+                WHERE name = %s AND category IN ('Ship', 'Infrastructure')
             """, (request.asset_name,))
-
             asset_row = cursor.fetchone()
 
         if not asset_row:
@@ -1103,37 +1105,107 @@ def purchase_asset(request: PurchaseRequest):
 
         cost = float(asset_row['base_cost'])
 
+        # Check if player can afford it
         if current_credits < cost:
             return {
                 "status": "success",
-                "message": f"Not enough credits! Need {cost:,} but have {current_credits:,}.",
+                "message": f"Not enough credits! Need ${cost:,} but have ${current_credits:,}.",
                 "credits_remaining": current_credits,
                 "asset_name": request.asset_name,
                 "cost": cost
             }
 
-        # Purchase the asset - assign to planet 1 for now
-        cursor.execute("""
-            INSERT INTO supremacy_game.assets_catalog (name, category, base_cost)
-            VALUES (%s, 'Infrastructure', %s)
-            ON DUPLICATE KEY UPDATE name=VALUES(name), base_cost=VALUES(base_cost)
-        """, (request.asset_name, 0))
+        # Terraformer is one-time only
+        if request.asset_name == 'Terraformer':
+            cursor.execute("""
+                SELECT COUNT(*) FROM planetary_assets pa
+                JOIN planets p ON pa.planet_id = p.planet_id
+                WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                AND pa.asset_name = 'Terraformer'
+            """)
+            owned_count = cursor.fetchone()[0]
+            if owned_count > 0:
+                return {
+                    "status": "success",
+                    "message": "You already own a Terraformer. It cannot be purchased again.",
+                    "credits_remaining": current_credits,
+                    "asset_name": request.asset_name,
+                    "cost": cost
+                }
 
+        # Deduct credits from player (transactional)
+        cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
         conn.commit()
+
+        # Get the actual planet_id for assignment (use first owned planet or default to 1)
+        cursor.execute("""
+            SELECT planet_id FROM planets
+            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            ORDER BY planet_id LIMIT 1
+        """)
+        planet_row = cursor.fetchone()
+        planet_id = planet_row['planet_id'] if planet_row else 1
+
+        # For infrastructure items, update the colonies table so they actually appear on the planet
+        if asset_row['category'] == 'Infrastructure':
+            cursor.execute("""
+                SELECT planet_id FROM planets
+                WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                ORDER BY planet_id LIMIT 1
+            """)
+            colony_planet = cursor.fetchone()
+            target_planet_id = colony_planet['planet_id'] if colony_planet else planet_id
+
+            if request.asset_name == 'EnergySatellite':
+                cursor.execute("""
+                    INSERT INTO colonies (planet_id, solar_satellites)
+                    VALUES (%s, 1)
+                    ON DUPLICATE KEY UPDATE solar_satellites = solar_satellites + 1
+                """, (target_planet_id,))
+            elif request.asset_name == 'Terraformer':
+                cursor.execute("""
+                    INSERT INTO colonies (planet_id, farming_stations, solar_satellites)
+                    VALUES (%s, 1, 1)
+                    ON DUPLICATE KEY UPDATE
+                        farming_stations = farming_stations + 1,
+                        solar_satellites = solar_satellites + 1
+                """, (target_planet_id,))
+
+        # Insert asset into player's inventory/assets table
+        # Determine asset_type: equipment items get 'Equipment' type regardless of their catalog category
+        catalog_type = asset_row['category']
+        if catalog_type in ('Armor', 'Weapon'):
+            catalog_type = 'Equipment'
+
+        cursor.execute("""
+            INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+            VALUES (%s, %s, %s, 1, %s)
+            ON DUPLICATE KEY UPDATE quantity = quantity + 1
+        """, (planet_id, request.asset_name, catalog_type, cost))
+        conn.commit()
+
+        # Get new credit balance
+        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
+        credit_row = cursor.fetchone()
+        new_credits = int(credit_row['credits']) if credit_row else 0
+
         cursor.close()
 
         return {
             "status": "success",
             "message": f"Purchased {request.asset_name} successfully!",
-            "credits_remaining": current_credits - cost
+            "credits_remaining": new_credits,
+            "asset_name": request.asset_name,
+            "cost": cost
         }
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/marketplace/purchase-equipment")
 def purchase_equipment(request: PurchaseRequest):
-    """Purchase military equipment (CLI: Equipment section)."""
+    """Purchase military equipment and add to player inventory."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1141,14 +1213,14 @@ def purchase_equipment(request: PurchaseRequest):
     try:
         cursor = conn.cursor(dictionary=True)
 
-        # Get current credits
+        # Get player credits
         cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
         credit_row = cursor.fetchone()
         current_credits = int(credit_row['credits']) if credit_row else 0
 
         # Check if equipment exists
         cursor.execute("""
-            SELECT base_cost, strength_value FROM supremacy_game.equipment_catalog
+            SELECT name, category, base_cost, strength_value FROM supremacy_game.equipment_catalog
             WHERE name = %s
         """, (request.asset_name,))
 
@@ -1159,29 +1231,98 @@ def purchase_equipment(request: PurchaseRequest):
         cost = int(row['base_cost'])
         strength = row['strength_value']
 
+        # Check if player can afford it
         if current_credits < cost:
             return {
                 "status": "success",
-                "message": f"Not enough credits! Need {cost:,} but have {current_credits:,}.",
+                "message": f"Not enough credits! Need ${cost:,} but have ${current_credits:,}.",
                 "credits_remaining": current_credits,
                 "asset_name": request.asset_name,
                 "cost": cost
             }
 
-        # Deduct credits
+        # Deduct credits from player (transactional)
         cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
         conn.commit()
+
+        # Get the actual planet_id for assignment
+        cursor.execute("""
+            SELECT planet_id FROM planets
+            WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            ORDER BY planet_id LIMIT 1
+        """)
+        planet_row = cursor.fetchone()
+        planet_id = planet_row['planet_id'] if planet_row else 1
+
+        # Insert equipment into player's inventory/assets table
+        # Store as 'Equipment' so UI can display it in the equipment filter
+        cursor.execute("""
+            INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+            VALUES (%s, %s, %s, 1, %s)
+            ON DUPLICATE KEY UPDATE quantity = quantity + 1
+        """, (planet_id, request.asset_name, 'Equipment', cost))
+        conn.commit()
+
+        # Get new credit balance
+        cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
+        credit_row = cursor.fetchone()
+        new_credits = int(credit_row['credits']) if credit_row else 0
+
         cursor.close()
 
         return {
             "status": "success",
-            "message": f"Purchased {request.asset_name} (Strength: {strength})!",
-            "credits_remaining": current_credits - cost,
+            "message": f"Purchased {request.asset_name} successfully!",
+            "credits_remaining": new_credits,
             "asset_name": request.asset_name,
+            "cost": cost,
             "strength": strength
         }
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/planet/{planet_id}/assets")
+def get_planet_assets(planet_id: int):
+    """Get purchased assets for a specific planet from planetary_assets table."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT asset_name, asset_type, quantity, base_cost
+            FROM supremacy_game.planetary_assets
+            WHERE planet_id = %s
+        """, (planet_id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+    finally:
+        conn.close()
+
+
+@app.get("/api/player/assets")
+def get_player_assets():
+    """Get all purchased assets across all player planets."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT pa.asset_name, pa.asset_type, pa.quantity, pa.base_cost, pa.planet_id, p.name as planet_name
+            FROM supremacy_game.planetary_assets pa
+            JOIN supremacy_game.planets p ON pa.planet_id = p.planet_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM supremacy_game.users WHERE username = 'Player')
+            ORDER BY pa.asset_type, pa.asset_name
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+    finally:
+        conn.close()
 
 
 @app.post("/api/action/move_ship")
@@ -1280,13 +1421,16 @@ def get_debug_player_planets():
     try:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT p.planet_id, p.name, ps.population,
+            SELECT p.planet_id, p.name, p.system_id,
+                   u.username as owner_name,
+                   COALESCE(ps.population, 0) as population,
                    COALESCE(ps.food_level, 0) as food_level,
                    COALESCE(ps.energy_level, 0) as energy_level,
                    COALESCE(ps.fuel_level, 0) as fuel_level
-            FROM planets p
-            JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            FROM supremacy_game.planets p
+            LEFT JOIN supremacy_game.planetary_stats ps ON p.planet_id = ps.planet_id
+            LEFT JOIN supremacy_game.users u ON p.owner_user_id = u.user_id
+            WHERE p.owner_user_id IN (SELECT user_id FROM supremacy_game.users WHERE username = 'Player')
         """)
 
         planets = cursor.fetchall()
@@ -1297,9 +1441,19 @@ def get_debug_player_planets():
                 "planet_id": row['planet_id'],
                 "name": row['name'],
                 "population": int(row['population']),
-                "food_level": float(row['food_level']),
-                "energy_level": float(row['energy_level']),
-                "fuel_level": float(row['fuel_level'])
+                "resources": {
+                    "food_level": float(row['food_level']),
+                    "energy_level": float(row['energy_level']),
+                    "fuel_level": float(row['fuel_level']),
+                },
+                "fleet": [],
+                "infrastructure": {
+                    "farming_stations": 0,
+                    "mining_stations": 0,
+                    "solar_satellites": 0
+                },
+                "system_id": row['system_id'],
+                "owner_name": row['owner_name'] or 'Neutral'
             }
             for row in planets
         ]

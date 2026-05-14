@@ -74,13 +74,14 @@ CREATE TABLE ship_cargo (
 );
 
 -- 7. MILITARY_PLATOON: Details of military readiness on a planet.
--- 8. ASSETS CATALOG: Lookup for all purchasable equipment and ships.
+-- 8. ASSETS CATALOG: Lookup for all purchasable ships and infrastructure items.
 CREATE TABLE assets_catalog (
     asset_id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    category ENUM('Ship', 'Infrastructure', 'Military') NOT NULL,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    category ENUM('Ship', 'Infrastructure') NOT NULL,
     base_cost BIGINT NOT NULL, -- Cost in credits
-    is_unique BOOLEAN DEFAULT FALSE -- True for one-time purchases like Terraformer
+    is_unique BOOLEAN DEFAULT FALSE, -- True for one-time purchases like Terraformer
+    image_url VARCHAR(255) NOT NULL -- Path to image file in images/ directory
 );
 
 -- 9. SHIP TYPES: Specific catalog for ships (could also live in assets_catalog)
@@ -89,14 +90,31 @@ CREATE TABLE ship_types (
     base_purchase_cost BIGINT NOT NULL
 );
 
--- 10. EQUIPMENT CATALOG: Defines purchasable military gear and training costs.
+-- 9. EQUIPMENT CATALOG: Defines purchasable military weapons and armor.
 CREATE TABLE equipment_catalog (
     equipment_id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL UNIQUE,
     category ENUM('Armor', 'Weapon') NOT NULL,
-    base_cost BIGINT NOT NULL,
-    strength_value INT NOT NULL -- Base strength contribution (e.g., +5 armor)
+    base_cost BIGINT NOT NULL, -- Cost in credits
+    strength_value INT NOT NULL, -- Base strength contribution (e.g., +5 armor)
+    image_url VARCHAR(255) NOT NULL -- Path to image file in images/ directory
 );
+
+-- 11. PLANETARY_ASSETS: Stores purchased assets assigned to planets (ships, infrastructure, equipment)
+CREATE TABLE planetary_assets (
+    planet_id INT NOT NULL,
+    asset_name VARCHAR(100) NOT NULL,
+    asset_type ENUM('Ship', 'Infrastructure', 'Equipment') NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    base_cost BIGINT NOT NULL,
+    PRIMARY KEY (planet_id, asset_name),
+    FOREIGN KEY (planet_id) REFERENCES planets(planet_id) ON DELETE CASCADE,
+    CHECK (asset_type IN ('Ship', 'Infrastructure', 'Equipment'))
+);
+
+-- Index for faster lookups by asset type and cost
+CREATE INDEX idx_planetary_assets_type ON planetary_assets(asset_type);
+CREATE INDEX idx_planetary_assets_cost ON planetary_assets(base_cost);
 
 -- Linking tables for better data integrity and flexibility:
 -- For example, ships can be linked to asset catalog items if needed in the future.

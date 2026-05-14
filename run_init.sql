@@ -4,34 +4,26 @@
 -- =============================================
 -- 1. ASSETS CATALOG (ships, infrastructure)
 -- =============================================
-INSERT IGNORE INTO assets_catalog (name, category, base_cost, is_unique) VALUES
-('BattleCruiser', 'Ship', 500, FALSE),
-('CargoShip', 'Ship', 300, FALSE),
-('FarmingShip', 'Ship', 150, FALSE),
-('MineralShip', 'Ship', 180, FALSE),
-('Terraformer', 'Infrastructure', 2000, TRUE);
+INSERT IGNORE INTO assets_catalog (name, category, base_cost, is_unique, image_url) VALUES
+('FarmingShip', 'Ship', 5000, FALSE, 'farmingship.png'),
+('CargoShip', 'Ship', 8500, FALSE, 'deep_space_cargo_ship.png'),
+('MineralShip', 'Ship', 12000, FALSE, 'mineralship.png'),
+('BattleCruiser', 'Ship', 45000, TRUE, 'battle_cruiser.png'),
+('EnergySatellite', 'Infrastructure', 25000, FALSE, 'energy_satellite.png'),
+('Terraformer', 'Infrastructure', 180000, TRUE, 'terraformer.png');
 
 -- =============================================
--- 2. SHIP TYPES (specific ship catalog with costs)
+-- 3. EQUIPMENT CATALOG (armor, weapons)
 -- =============================================
-INSERT IGNORE INTO ship_types (ship_type_name, base_purchase_cost) VALUES
-('BattleCruiser', 500),
-('CargoShip', 300),
-('FarmingShip', 150),
-('MineralShip', 180);
-
--- =============================================
--- 3. EQUIPMENT CATALOG (armor, weapons, training)
--- =============================================
-INSERT INTO equipment_catalog (name, category, base_cost, strength_value) VALUES
-('Light Armor', 'Armor', 100, 3),
-('Medium Armor', 'Armor', 250, 6),
-('Heavy Armor', 'Armor', 500, 10),
-('Plasteel Armor', 'Armor', 800, 15),
-('Pistol', 'Weapon', 50, 2),
-('Rifle', 'Weapon', 150, 5),
-('Cannon', 'Weapon', 300, 8),
-('Heavy Cannon', 'Weapon', 600, 12);
+INSERT IGNORE INTO equipment_catalog (name, category, base_cost, strength_value, image_url) VALUES
+('Light Armor', 'Armor', 100, 3, 'lightarmour.png'),
+('Medium Armor', 'Armor', 250, 6, 'mediumarmour.png'),
+('SmallCannon', 'Weapon', 300, 8, 'canon.png'),
+('Pistol', 'Weapon', 450, 1, 'pistol.png'),
+('Heavy Armor', 'Armor', 500, 10, 'heavyarmour.png'),
+('Heavy Cannon', 'Weapon', 600, 12, 'heavycannon.png'),
+('Plasteel Armor', 'Armor', 800, 15, 'plasteelarmor.png'),
+('Rifle', 'Weapon', 800, 3, 'rifle.png');
 
 -- =============================================
 -- 4. SYSTEMS (galaxy regions)

@@ -24,6 +24,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
   const [selectedPlanet, setSelectedPlanet] = useState<any>(null);
 
   useEffect(() => {
+    console.log('[DebugPanel] Component mounted, initial state:', { isLoading, playerPlanets: playerPlanets.length, message });
     loadDebugData();
   }, []);
 
@@ -33,6 +34,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       const res = await fetch('/api/player/credits');
       if (res.ok) {
         const data = await res.json();
+        console.log('[DebugPanel] setPlayerCredits:', data.credits);
         setPlayerCredits(data.credits || 0);
       }
     } catch (error) {
@@ -46,11 +48,13 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
 
   // Load owned planets with full database content (mirrors CLI debug menu)
   const loadDebugData = async () => {
+    console.log('Testing');
     try {
       setIsLoading(true);
       const res = await fetch('/api/debug/player-planets');
       if (res.ok) {
         const data = await res.json();
+        console.log('[DebugPanel] setPlayerPlanets:', data, 'length:', data.length);
         setPlayerPlanets(data);
 
         // Calculate production/consumption stats per planet
@@ -58,7 +62,8 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
         const newConsumptionData: Record<number, any> = {};
 
         for (const planet of data) {
-          if (planet.resources?.fleet && Array.isArray(planet.resources.fleet)) {
+          const fleet = planet.fleet || planet.resources?.fleet || [];
+          if (Array.isArray(fleet)) {
             const infra = {
               farming_stations: planet.infrastructure?.farming_stations || 0,
               mining_stations: planet.infrastructure?.mining_stations || 0,
@@ -66,7 +71,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
             };
 
             const pop = planet.population || 100;
-            const ships = planet.resources.fleet.length;
+            const ships = fleet.length;
 
             // Production per turn (from CLI logic)
             const food_produced = infra.farming_stations * 15.0;
@@ -87,15 +92,19 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
           }
         }
 
+        console.log('[DebugPanel] setProductionData keys:', Object.keys(newProductionData));
+        console.log('[DebugPanel] setConsumptionData keys:', Object.keys(newConsumptionData));
         setProductionData(newProductionData);
         setConsumptionData(newConsumptionData);
-
+        console.log('[DebugPanel] setMessage: Loaded', data.length, 'planets');
         setMessage(`Loaded ${data.length} owned planet${data.length !== 1 ? 's' : ''}.`);
       }
     } catch (error: any) {
       console.error('Error loading debug data:', error);
+      console.log('[DebugPanel] setMessage: Error:', error.message);
       setMessage(`Error: ${error.message}`);
     } finally {
+      console.log('[DebugPanel] setIsLoading(false), final state:', { playerPlanets: playerPlanets.length, isLoading: false });
       setIsLoading(false);
     }
   };
@@ -120,13 +129,16 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       const data = await res.json();
 
       if (res.ok) {
+        console.log('[DebugPanel] setMessage:', data.message);
         setMessage(data.message);
         loadDebugData(); // Refresh planet list
       } else {
+        console.log('[DebugPanel] setMessage: Failed to adjust', type, '-', data.detail);
         setMessage(data.detail || `Failed to adjust ${type}`);
       }
     } catch (error: any) {
       console.error('Error adjusting level:', error);
+      console.log('[DebugPanel] setMessage: Adjust error:', error.message);
       setMessage(`Error: ${error.message}`);
     } finally {
       setIsLoading(false);
@@ -159,6 +171,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       await adjustLevel(planetId, type, newValue);
     } catch (error: any) {
       console.error('Error incrementing:', error);
+      console.log('[DebugPanel] setMessage: Increment error:', error.message);
       setMessage(`Error: ${error.message}`);
     }
   };
@@ -181,6 +194,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       await incrementLevel(planetId, typeMap[resourceType] || resourceType);
     } catch (error: any) {
       console.error('Error incrementing all levels:', error);
+      console.log('[DebugPanel] setMessage: IncrementAllLevels error:', error.message);
       setMessage(`Error: ${error.message}`);
     }
   };
@@ -196,13 +210,16 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       });
 
       if (res.ok) {
+        console.log('[DebugPanel] setMessage: Added', amount, 'credits');
         setMessage(`Added $${amount.toLocaleString()} to Player credits.`);
         loadDebugData(); // Refresh planets to show updated credits context
       } else {
+        console.log('[DebugPanel] setMessage: Failed to add credits');
         setMessage('Failed to add credits.');
       }
     } catch (error: any) {
       console.error('Error adding credits:', error);
+      console.log('[DebugPanel] setMessage: Add credits error:', error.message);
       setMessage(`Error: ${error.message}`);
     } finally {
       setIsLoading(false);
@@ -212,6 +229,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
   // List all planets with current state
   const listAllPlanets = () => {
     setPlayerPlanets([...playerPlanets]); // Reload current state
+    console.log('[DebugPanel] setMessage: listAllPlanets');
     setMessage("Showing all owned planets with current resource state.");
   };
 
@@ -286,15 +304,19 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
   const showPlanetDetails = async (planet: any) => {
     try {
       await fetch(`/api/planet/${planet.planet_id}`); // Load full planet data
+      console.log('[DebugPanel] setSelectedPlanet:', planet.name);
       setSelectedPlanet(planet);
+      console.log('[DebugPanel] setMessage: Selected', planet.name);
       setMessage(`Selected: ${planet.name}. Ready for adjustments.`);
     } catch (error: any) {
       console.error('Error:', error);
+      console.log('[DebugPanel] setMessage: showPlanetDetails error:', error.message);
       setMessage(`Error loading planet: ${error.message}`);
     }
   };
 
   // Render main debug menu view (mirrors CLI handle_debug_menu output)
+  console.log('[DebugPanel] Render - state:', { selectedPlanet: !!selectedPlanet, playerPlanets: playerPlanets.length, isLoading, message, productionKeys: Object.keys(productionData).length });
   const renderDebugMenu = () => (
     <div className="screen debug-screen">
       {/* Credits Display */}
@@ -407,9 +429,11 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
         )}
       </div>
 
-      return selectedPlanet ? renderPlanetLevelAdjustment() : renderDebugMenu();
     </div>
   );
+
+  // Return the actual component JSX
+  return selectedPlanet ? renderPlanetLevelAdjustment() : renderDebugMenu();
 };
 
 export default DebugPanel;

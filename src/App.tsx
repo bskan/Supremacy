@@ -7,9 +7,10 @@ import SystemMap from './components/SystemMap';
 import BattleSimulator from './components/BattleSimulator';
 import DebugPanel from './components/DebugPanel';
 import Dashboard from './components/Dashboard';
+import MyAssets from './components/MyAssets';
 
 type MarketPlaceView = 'compact' | 'hero';
-type Screen = 'home' | 'dashboard' | 'planets' | 'fleet' | 'marketplace' | 'systems' | 'battle' | 'debug' | MarketPlaceView;
+type Screen = 'home' | 'dashboard' | 'planets' | 'fleet' | 'marketplace' | 'systems' | 'battle' | 'debug' | 'my-assets' | MarketPlaceView;
 
 // Global styles import (already handled by CSS loader in vite config)
 
@@ -18,11 +19,13 @@ const App: React.FC = () => {
   const [activePlanetId, setActivePlanetId] = React.useState<number | null>(null);
   const [message, setMessage] = React.useState<string>("Welcome to Supremacy Game");
   const [credits, setCredits] = React.useState<number | null>(null);
+  const [assetCount, setAssetCount] = React.useState<number | null>(null);
   const [marketplaceView, setMarketplaceView] = React.useState<MarketPlaceView>('compact');
 
-  // Load player credits when switching screens
+  // Load player credits and asset count when switching screens
   React.useEffect(() => {
     loadPlayerCredits();
+    loadAssetCount();
   }, []);
 
   const loadPlayerCredits = async () => {
@@ -34,6 +37,20 @@ const App: React.FC = () => {
       }
     } catch (error) {
       console.error('Error loading credits:', error);
+    }
+  };
+
+  const loadAssetCount = async () => {
+    try {
+      const res = await fetch('/api/player/assets');
+      if (res.ok) {
+        const data = await res.json();
+        // Sum quantities since assets can be purchased multiple times
+        const total = Array.isArray(data) ? data.reduce((s: number, a: any) => s + (a.quantity || 1), 0) : 0;
+        setAssetCount(total);
+      }
+    } catch (error) {
+      console.error('Error loading asset count:', error);
     }
   };
 
@@ -81,6 +98,11 @@ const App: React.FC = () => {
     setMessage("Dashboard - All Planets from Database");
   };
 
+  const goMyAssets = () => {
+    setCurrentScreen('my-assets');
+    setMessage("My Purchased Assets");
+  };
+
   return (
     <div className="supremacy-app">
       {/* Header / Navigation Bar */}
@@ -99,10 +121,17 @@ const App: React.FC = () => {
           <button onClick={goBattle.bind(this, 1, 3)} className="nav-btn" id="btn-battle-sim">[7] Battle Sim</button>
           <button onClick={goDebug} className="nav-btn debug" id="btn-debug">[8] Debug Tools</button>
           <button onClick={goToSystems} className="nav-btn" id="btn-systems">[10] System List</button>
+          <button onClick={goMyAssets} className="nav-btn" id="btn-my-assets">[11] My Assets</button>
         </div>
 
         {credits !== null && (
         <button onClick={goHome} className="nav-home">Return to Main Menu</button>
+        )}
+
+        {assetCount !== null && (
+        <div className="nav-asset-count">
+          <span>&#128722;</span> {assetCount} Assets
+        </div>
         )}
       </nav>
 
@@ -203,6 +232,8 @@ const App: React.FC = () => {
             onBack={goHome}
           />
         )}
+
+        {currentScreen === 'my-assets' && <MyAssets onBack={goHome} />}
       </main>
 
       {/* Status Bar */}

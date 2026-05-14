@@ -211,9 +211,166 @@ def handle_purchase_assets():
         print(f"  {name:<20} ({category}): ${cost:>6,}{status}")
 
     print("\nAvailable Actions:")
-    print("  [1] Return to Home Menu")
+    print("  [1] Purchase a Ship")
+    print("  [2] Purchase Infrastructure")
+    print("  [3] Purchase Equipment")
+    print("  [4] Return to Home Menu")
 
     action = input("\nEnter choice: ").strip()
+
+    if action == "1":
+        # Pick a ship to purchase
+        cursor.execute("""
+            SELECT name, base_cost FROM supremacy_game.assets_catalog
+            WHERE category = 'Ship' ORDER BY base_cost
+        """)
+        ships = cursor.fetchall()
+        print("\nAvailable Ships:")
+        for i, (name, cost) in enumerate(ships, 1):
+            available = credits >= cost
+            status = "[AVAILABLE]" if available else "[OUT OF CREDITS]"
+            print(f"  {i}. {name:<20} ({cost:>8,} credits) {status}")
+        choice = input(f"\nEnter ship number [1-{len(ships)}] (or 0 to cancel): ").strip()
+        try:
+            idx = int(choice)
+            if 1 <= idx <= len(ships):
+                name, cost = ships[idx - 1]
+                if credits >= cost:
+                    # Get the first owned planet to attach the asset to
+                    cursor.execute("""
+                        SELECT planet_id FROM planets
+                        WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                        ORDER BY planet_id LIMIT 1
+                    """)
+                    planet_row = cursor.fetchone()
+                    planet_id = planet_row[0] if planet_row else 1
+
+                    cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
+                    game_state["conn"].commit()
+
+                    cursor.execute("""
+                        INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+                        VALUES (%s, %s, %s, 1, %s)
+                        ON DUPLICATE KEY UPDATE quantity = quantity + 1
+                    """, (planet_id, name, 'Ship', cost))
+                    game_state["conn"].commit()
+
+                    # Update local credits
+                    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
+                    credits = cursor.fetchone()[0]
+                    print(f"\nPurchased {name}! Remaining credits: {credits:,}")
+                else:
+                    print("Not enough credits!")
+        except (ValueError, IndexError):
+            pass
+
+    elif action == "2":
+        # Pick infrastructure to purchase
+        cursor.execute("""
+            SELECT name, base_cost FROM supremacy_game.assets_catalog
+            WHERE category = 'Infrastructure' ORDER BY base_cost
+        """)
+        infra = cursor.fetchall()
+        print("\nAvailable Infrastructure:")
+        for i, (name, cost) in enumerate(infra, 1):
+            available = credits >= cost
+            status = "[AVAILABLE]" if available else "[OUT OF CREDITS]"
+            print(f"  {i}. {name:<20} ({cost:>8,} credits) {status}")
+        choice = input(f"\nEnter infrastructure number [1-{len(infra)}] (or 0 to cancel): ").strip()
+        try:
+            idx = int(choice)
+            if 1 <= idx <= len(infra):
+                name, cost = infra[idx - 1]
+                if credits >= cost:
+                    # Check if Terraformer is already owned (one-time purchase)
+                    if name == 'Terraformer':
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM planetary_assets pa
+                            JOIN planets p ON pa.planet_id = p.planet_id
+                            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                            AND pa.asset_name = 'Terraformer'
+                        """)
+                        owned_count = cursor.fetchone()[0]
+                        if owned_count > 0:
+                            print("You already own a Terraformer. It cannot be purchased again.")
+                            action = "4"
+                        else:
+                            # Update infrastructure on the player's colonies
+                            cursor.execute("""
+                                INSERT INTO colonies (planet_id, solar_satellites)
+                                VALUES (1, 1)
+                                ON DUPLICATE KEY UPDATE solar_satellites = solar_satellites + 1
+                            """)
+                            game_state["conn"].commit()
+
+                            cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
+                            game_state["conn"].commit()
+
+                            cursor.execute("""
+                                SELECT planet_id FROM planets
+                                WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                                ORDER BY planet_id LIMIT 1
+                            """)
+                            planet_row = cursor.fetchone()
+                            planet_id = planet_row[0] if planet_row else 1
+
+                            cursor.execute("""
+                                INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+                                VALUES (%s, %s, %s, 1, %s)
+                                ON DUPLICATE KEY UPDATE quantity = quantity + 1
+                            """, (planet_id, name, 'Infrastructure', cost))
+                            game_state["conn"].commit()
+
+                            cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
+                            credits = cursor.fetchone()[0]
+                            print(f"\nPurchased {name}! Remaining credits: {credits:,}")
+                    else:
+                        print("Not enough credits!")
+        except (ValueError, IndexError):
+            pass
+
+    elif action == "3":
+        # Pick equipment to purchase
+        cursor.execute("""
+            SELECT name, base_cost FROM supremacy_game.equipment_catalog ORDER BY base_cost
+        """)
+        equipment = cursor.fetchall()
+        print("\nAvailable Equipment:")
+        for i, (name, cost) in enumerate(equipment, 1):
+            available = credits >= cost
+            status = "[AVAILABLE]" if available else "[OUT OF CREDITS]"
+            print(f"  {i}. {name:<20} ({cost:>8,} credits) {status}")
+        choice = input(f"\nEnter equipment number [1-{len(equipment)}] (or 0 to cancel): ").strip()
+        try:
+            idx = int(choice)
+            if 1 <= idx <= len(equipment):
+                name, cost = equipment[idx - 1]
+                if credits >= cost:
+                    cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
+                    game_state["conn"].commit()
+
+                    cursor.execute("""
+                        SELECT planet_id FROM planets
+                        WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+                        ORDER BY planet_id LIMIT 1
+                    """)
+                    planet_row = cursor.fetchone()
+                    planet_id = planet_row[0] if planet_row else 1
+
+                    cursor.execute("""
+                        INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+                        VALUES (%s, %s, %s, 1, %s)
+                        ON DUPLICATE KEY UPDATE quantity = quantity + 1
+                    """, (planet_id, name, 'Equipment', cost))
+                    game_state["conn"].commit()
+
+                    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
+                    credits = cursor.fetchone()[0]
+                    print(f"\nPurchased {name}! Remaining credits: {credits:,}")
+                else:
+                    print("Not enough credits!")
+        except (ValueError, IndexError):
+            pass
 
 
 def handle_simulate_turn():
@@ -494,6 +651,52 @@ def save_and_exit():
     cursor.close()
 
     print("Game saved. Exiting...")
+
+
+def handle_my_assets():
+    """
+    Screen 12: My Assets - View all purchased assets across player planets.
+    """
+    print("\n" + "=" * 60)
+    print("       MY PURCHASED ASSETS")
+    print("=" * 60)
+
+    cursor = game_state["conn"].cursor()
+    cursor.execute("""
+        SELECT pa.asset_name, pa.asset_type, pa.quantity, pa.base_cost,
+               pa.planet_id, p.name as planet_name
+        FROM planetary_assets pa
+        JOIN planets p ON pa.planet_id = p.planet_id
+        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+        ORDER BY pa.asset_type, pa.asset_name
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    if not rows:
+        print("\nNo assets purchased yet. Visit the Purchase Assets screen to buy ships, infrastructure, or equipment.")
+        return
+
+    # Group by type
+    grouped: dict[str, list] = {}
+    for asset_name, asset_type, quantity, base_cost, planet_id, planet_name in rows:
+        if asset_type not in grouped:
+            grouped[asset_type] = []
+        grouped[asset_type].append((asset_name, asset_type, quantity, base_cost, planet_id, planet_name))
+
+    total_items = sum(len(v) for v in grouped.values())
+    total_value = sum(r[2] * r[3] for r in rows)
+
+    icons = {'Ship': '[Ship]', 'Infrastructure': '[Infra]', 'Equipment': '[Equip]'}
+
+    for asset_type, items in sorted(grouped.items()):
+        icon = icons.get(asset_type, '[?]')
+        print(f"\n  --- {icon} {asset_type.upper()} ({len(items)} unique, {sum(it[2] for it in items)} total) ---")
+        for name, atype, qty, cost, pid, pname in items:
+            print(f"      - {name} x{qty}    ({cost:>10,} credits each) -> Planet {pid}: {pname}")
+
+    print(f"\n  Total asset value: {total_value:>12,} credits")
+    print("=" * 60)
 
 
 def handle_debug_menu():
@@ -904,32 +1107,42 @@ def display_home_menu():
     """)
     owned_planets = cursor.fetchall()
 
+    # Total assets owned across all planets (sum quantities)
+    cursor.execute("""
+        SELECT COALESCE(SUM(quantity), 0) as asset_count FROM planetary_assets pa
+        JOIN planets p ON pa.planet_id = p.planet_id
+        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+    """)
+    asset_count = cursor.fetchone()[0]
+
     cursor.close()
 
     print("\n=== Player Status ===")
     print(f"Owned Planets: {len(owned_planets)}")
+    print(f"Assets Owned:  {asset_count}")
     print(f"Credits: {credits:,}")
 
-    # Show available screens (1, 2, 3, 4, 7, 9, 10) and newly implemented ones
+    # Show available screens and newly implemented ones
     print("\n--- Available Screens ---")
     print("  [1] Docking Bay            - Ship movement & fleet management")
     print("  [2] Purchase Assets        - Browse catalog & buy ships/infrastructure")
     print("  [3] Planet Details         - View planet resources & infrastructure")
     print("  [4] Simulate Turn          - Advance time & update planetary data")
     print("  [5] Military Platoons      - Equipment training (not yet implemented)")
-    print("  [5] Cargo Management       - Ship loading (not yet implemented)")
-    print("  [6] Surface Assignments    - Farming/mining deployment (not yet implemented)")
-    print("  [7] Battle Simulation      - Combat between planets")
-    print("  [8] Save & Exit            - Persist game state")
+    print("  [6] Cargo Management       - Ship loading (not yet implemented)")
+    print("  [7] Surface Assignments    - Farming/mining deployment (not yet implemented)")
+    print("  [8] Battle Simulation      - Combat between planets")
+    print("  [9] Save & Exit            - Persist game state")
 
     # Data Browsing section
     print("\n--- Data Browsing ---")
-    print("  [9] Fleet Overview         - View all ships across your fleet")
-    print("  [10] System List           - Browse all systems and planets")
+    print("  [10] Fleet Overview        - View all ships across your fleet")
+    print("  [11] System List           - Browse all systems and planets")
+    print("  [12] My Assets             - View all purchased assets")
 
     # Debug Tools (Development only)
     print("\n--- Debug Tools ---")
-    print("  [11] Debug Menu            - Manual level setting & diagnostics")
+    print("  [13] Debug Menu            - Manual level setting & diagnostics")
 
     print("=" * 50)
     print("Enter screen number: ")
@@ -945,13 +1158,15 @@ def display_home_menu():
         "4": simulate_turn,
         "7": handle_battle_screen,
         "9": handle_fleet_overview,
-        "10": handle_system_list,
-        "11": handle_debug_menu
+        "10": handle_fleet_overview,
+        "11": handle_system_list,
+        "12": handle_my_assets,
+        "13": handle_debug_menu
     }
 
     if choice in handlers:
         handlers[choice]()
-    elif choice == "8":
+    elif choice == "9":
         save_and_exit()
 
 

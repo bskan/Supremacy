@@ -19,6 +19,7 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
   const [fleet, setFleet] = useState<Array<{ ship_type: string; count: number }>>([]);
   const [allPlanets, setAllPlanets] = useState<any[]>([]);
   const [activePlanet, setActivePlanet] = useState<number | null>(null);
+  const [purchasedShips, setPurchasedShips] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("Loading fleet data...");
   const [playerCredits, setPlayerCredits] = useState<number | null>(null);
@@ -67,6 +68,13 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
         setFleet(data.resources?.fleet || []);
         setAllPlanets([]);
         setMessage(`At ${data.name}: Fleet loaded.`);
+
+        // Fetch purchased ships for this planet
+        const assetsRes = await fetch(`/api/planet/${planetId}/assets`);
+        if (assetsRes.ok) {
+          const assets = await assetsRes.json();
+          setPurchasedShips(assets.filter((a: any) => a.asset_type === 'Ship'));
+        }
       }
 
     } catch (error: any) {
@@ -189,6 +197,27 @@ const FleetManagement: React.FC<FleetManagementProps> = ({ onBack, setActivePlan
                 <span className="fleet-count">&times;{ship.count}</span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Purchased Ships */}
+        {purchasedShips.length > 0 && (
+          <div className="fleet-list">
+            <div className="section-header">
+              <span className="section-title">&#9876; Purchased Ships</span>
+            </div>
+            {purchasedShips.map((ship: any, idx: number) => {
+              const qty = ship.quantity || 1;
+              return (
+              <div key={idx} className="fleet-item">
+                <span className="fleet-icon">&#9851;</span>
+                <strong>{ship.asset_name} x{qty}</strong>
+                <span className="fleet-count" title={`${Math.floor(ship.base_cost).toLocaleString()} credits each`}>
+                  {Math.floor(ship.base_cost).toLocaleString()} credits
+                </span>
+              </div>
+            );
+            })}
           </div>
         )}
 

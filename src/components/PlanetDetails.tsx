@@ -20,6 +20,7 @@ const formatNumber = (num: any): string => {
 const PlanetDetails: React.FC<PlanetDetailsProps> = ({ planetId, onBack, onBattle, systemList }) => {
   // State matching CLI get_planet_state / calculate_resource_flow
   const [planet, setPlanet] = useState<any>(null);
+  const [purchasedAssets, setPurchasedAssets] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [productionData, setProductionData] = useState<any>(null);
   const [consumptionData, setConsumptionData] = useState<any>(null);
@@ -35,6 +36,12 @@ const PlanetDetails: React.FC<PlanetDetailsProps> = ({ planetId, onBack, onBattl
         const data = await res.json();
 
         setPlanet(data);
+
+        // Fetch purchased assets for this planet
+        const assetsRes = await fetch(`/api/planet/${planetId}/assets`);
+        if (assetsRes.ok) {
+          setPurchasedAssets(await assetsRes.json());
+        }
 
         // Calculate production/consumption per turn (from CLI logic)
         const infra = {
@@ -162,6 +169,27 @@ const PlanetDetails: React.FC<PlanetDetailsProps> = ({ planetId, onBack, onBattl
                   <span className="fleet-count">&times;{ship.count}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Purchased Assets */}
+        {(purchasedAssets?.length || 0) > 0 && (
+          <div className="info-section">
+            <h3>&#9876; Purchased Assets</h3>
+            <div className="purchased-list">
+              {purchasedAssets.map((asset: any, idx: number) => {
+                const icon = asset.asset_type === 'Ship' ? '&#9851;' : asset.asset_type === 'Infrastructure' ? '&#128736;' : '&#128663;';
+                const qty = asset.quantity || 1;
+                return (
+                  <div key={idx} className="purchased-card">
+                    <span className="purchased-icon">{icon}</span>
+                    <strong>{asset.asset_name} x{qty}</strong>
+                    <span className="purchased-type">{asset.asset_type}</span>
+                    <span className="purchased-cost">{Math.floor(asset.base_cost).toLocaleString()} credits each</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
