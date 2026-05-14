@@ -92,42 +92,23 @@ def handle_docking_bay():
     print("      DOCKING BAY (Screen 1)")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-
-    # Get fleet inventory at active planet
+    # Get fleet at active planet via game_engine helper
     active_planet_id = game_state.get('active_planet_id', 1)
-    cursor.execute("""
-        SELECT s.ship_type, COUNT(*) as count
-        FROM ships s
-        WHERE s.planet_id = %s
-        GROUP BY s.ship_type
-    """, (active_planet_id,))
-
-    fleet = cursor.fetchall()
+    fleet = get_fleet_at_planet(active_planet_id, game_state["conn"])
 
     if fleet:
         print("\nCurrent Fleet at Planet:")
-        for ship_type, count in fleet:
-            print(f"  {ship_type:<20}: {count} ships")
+        for item in fleet:
+            print(f"  {item['ship_type']:<20}: {item['count']} ships")
     else:
         print("  No ships currently docked here.")
 
-    cursor.close()
-
-    # Show available docking bays (all planets)
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name FROM planets p
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-
-    planets = cursor.fetchall()
-    print("\nYour Planets:")
-    for planet_data in planets:
-        planet_id, name = planet_data
-        print(f"  - {name} (ID: {planet_id})")
-
-    cursor.close()
+    # Show all planets via game_engine helper
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+    if planets:
+        print("\nYour Planets:")
+        for planet in planets:
+            print(f"  - {planet['name']} (ID: {planet['id']})")
 
     print("\nAvailable Actions:")
     print("  [1] View fleet at all planets")
@@ -136,29 +117,15 @@ def handle_docking_bay():
 
     if action == "1":
         # View fleet at all planets
-        cursor = game_state["conn"].cursor()
-        cursor.execute("""
-            SELECT s.planet_id, p.name as planet_name, ship_type, COUNT(*) as count
-            FROM ships s
-            JOIN planets p ON s.planet_id = p.planet_id
-            WHERE s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            GROUP BY s.planet_id, p.name, s.ship_type
-            ORDER BY s.planet_id, ship_type
-        """)
-
-        all_fleet = cursor.fetchall()
-        if all_fleet:
-            print("\nFleet Overview:")
-            for data in all_fleet:
-                planet_id, name, ship_type, count = data
-                print(f"  {name}: {count}x {ship_type}")
-        else:
-            print("\nNo ships owned yet. Use Purchase Assets to acquire ships.")
-
+        for planet in planets:
+            f = get_fleet_at_planet(planet['id'], game_state["conn"])
+            if f:
+                for item in f:
+                    print(f"  {planet['name']}: {item['count']}x {item['ship_type']}")
+            else:
+                print(f"  {planet['name']}: no ships")
     elif action == "2":
         pass
-
-    cursor.close()
 
 
 def handle_purchase_assets():
@@ -167,23 +134,22 @@ def handle_purchase_assets():
 
     Browse asset catalog and purchase ships, infrastructure, equipment.
     """
-    cursor = game_state["conn"].cursor()
+    conn = game_state["conn"]
+    cursor = conn.cursor()
 
     print("\n" + "=" * 50)
     print("   PURCHASE ASSETS & INFRASTRUCTURE (Screen 2)")
     print("=" * 50)
 
-    # Show player credits
-    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-    row = cursor.fetchone()
-    credits = row[0] if row else 0
+    # Show player credits via game_engine helper
+    credits = get_player_credits(db_conn=conn)
     print(f"\nAvailable Credits: {credits:,}")
-    cursor.close()
 
-    # Display available assets (ships)
-    cursor = game_state["conn"].cursor()
+    # Display available assets via game_engine helper
+    asset_data = get_asset_by_name("BattleCruiser", conn)  # placeholder to get catalog
+    # Fetch catalog directly (it's a read-only lookup)
     cursor.execute("""
-        SELECT name, category, base_cost FROM supremacy_game.assets_catalog
+        SELECT name, category, base_cost FROM assets_catalog
         WHERE category = 'Ship' ORDER BY base_cost
     """)
     ships = cursor.fetchall()
@@ -197,7 +163,7 @@ def handle_purchase_assets():
 
     # Display infrastructure options
     cursor.execute("""
-        SELECT name, category, base_cost FROM supremacy_game.assets_catalog
+        SELECT name, category, base_cost FROM assets_catalog
         WHERE category = 'Infrastructure' ORDER BY base_cost
     """)
     infra = cursor.fetchall()
@@ -211,7 +177,7 @@ def handle_purchase_assets():
 
     # Display equipment options
     cursor.execute("""
-        SELECT name, category, base_cost FROM supremacy_game.equipment_catalog ORDER BY base_cost
+        SELECT name, category, base_cost FROM equipment_catalog ORDER BY base_cost
     """)
     equipment = cursor.fetchall()
 
@@ -233,7 +199,7 @@ def handle_purchase_assets():
     if action == "1":
         # Pick a ship to purchase
         cursor.execute("""
-            SELECT name, base_cost FROM supremacy_game.assets_catalog
+            SELECT name, base_cost FROM assets_catalog
             WHERE category = 'Ship' ORDER BY base_cost
         """)
         ships = cursor.fetchall()
@@ -248,28 +214,21 @@ def handle_purchase_assets():
             if 1 <= idx <= len(ships):
                 name, cost = ships[idx - 1]
                 if credits >= cost:
-                    # Get the first owned planet to attach the asset to
-                    cursor.execute("""
-                        SELECT planet_id FROM planets
-                        WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                        ORDER BY planet_id LIMIT 1
-                    """)
-                    planet_row = cursor.fetchone()
-                    planet_id = planet_row[0] if planet_row else 1
+                    planet_id = get_first_owned_planet_id(db_conn=conn)
 
+                    # Deduct credits
                     cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
-                    game_state["conn"].commit()
+                    conn.commit()
 
+                    # Insert asset
                     cursor.execute("""
                         INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
                         VALUES (%s, %s, %s, 1, %s)
                         ON DUPLICATE KEY UPDATE quantity = quantity + 1
                     """, (planet_id, name, 'Ship', cost))
-                    game_state["conn"].commit()
+                    conn.commit()
 
-                    # Update local credits
-                    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-                    credits = cursor.fetchone()[0]
+                    credits = get_player_credits(db_conn=conn)
                     print(f"\nPurchased {name}! Remaining credits: {credits:,}")
                 else:
                     print("Not enough credits!")
@@ -279,7 +238,7 @@ def handle_purchase_assets():
     elif action == "2":
         # Pick infrastructure to purchase
         cursor.execute("""
-            SELECT name, base_cost FROM supremacy_game.assets_catalog
+            SELECT name, base_cost FROM assets_catalog
             WHERE category = 'Infrastructure' ORDER BY base_cost
         """)
         infra = cursor.fetchall()
@@ -294,57 +253,49 @@ def handle_purchase_assets():
             if 1 <= idx <= len(infra):
                 name, cost = infra[idx - 1]
                 if credits >= cost:
-                    # Check if Terraformer is already owned (one-time purchase)
                     if name == 'Terraformer':
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM planetary_assets pa
-                            JOIN planets p ON pa.planet_id = p.planet_id
-                            WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                            AND pa.asset_name = 'Terraformer'
-                        """)
-                        owned_count = cursor.fetchone()[0]
-                        if owned_count > 0:
+                        user_id_cursor = conn.cursor()
+                        user_id_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+                        uid = user_id_cursor.fetchone()[0]
+                        user_id_cursor.close()
+                        if has_player_owned_asset(uid, 'Terraformer', conn):
                             print("You already own a Terraformer. It cannot be purchased again.")
                             action = "4"
                         else:
-                            # Update infrastructure on the player's colonies
                             cursor.execute("""
-                                INSERT INTO colonies (planet_id, solar_satellites)
-                                VALUES (1, 1)
-                                ON DUPLICATE KEY UPDATE solar_satellites = solar_satellites + 1
-                            """)
-                            game_state["conn"].commit()
+                                INSERT INTO colonies (planet_id, farming_stations, solar_satellites)
+                                VALUES (%s, 1, 1)
+                                ON DUPLICATE KEY UPDATE
+                                    farming_stations = farming_stations + 1,
+                                    solar_satellites = solar_satellites + 1
+                            """, (get_first_owned_planet_id(db_conn=conn),))
+                            conn.commit()
 
-                            cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
-                            game_state["conn"].commit()
+                    # Deduct credits
+                    cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
+                    conn.commit()
 
-                            cursor.execute("""
-                                SELECT planet_id FROM planets
-                                WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                                ORDER BY planet_id LIMIT 1
-                            """)
-                            planet_row = cursor.fetchone()
-                            planet_id = planet_row[0] if planet_row else 1
+                    planet_id = get_first_owned_planet_id(db_conn=conn)
 
-                            cursor.execute("""
-                                INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
-                                VALUES (%s, %s, %s, 1, %s)
-                                ON DUPLICATE KEY UPDATE quantity = quantity + 1
-                            """, (planet_id, name, 'Infrastructure', cost))
-                            game_state["conn"].commit()
+                    catalog_type = 'Infrastructure'
+                    cursor.execute("""
+                        INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
+                        VALUES (%s, %s, %s, 1, %s)
+                        ON DUPLICATE KEY UPDATE quantity = quantity + 1
+                    """, (planet_id, name, catalog_type, cost))
+                    conn.commit()
 
-                            cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-                            credits = cursor.fetchone()[0]
-                            print(f"\nPurchased {name}! Remaining credits: {credits:,}")
-                    else:
-                        print("Not enough credits!")
+                    credits = get_player_credits(db_conn=conn)
+                    print(f"\nPurchased {name}! Remaining credits: {credits:,}")
+                else:
+                    print("Not enough credits!")
         except (ValueError, IndexError):
             pass
 
     elif action == "3":
         # Pick equipment to purchase
         cursor.execute("""
-            SELECT name, base_cost FROM supremacy_game.equipment_catalog ORDER BY base_cost
+            SELECT name, base_cost FROM equipment_catalog ORDER BY base_cost
         """)
         equipment = cursor.fetchall()
         print("\nAvailable Equipment:")
@@ -359,25 +310,18 @@ def handle_purchase_assets():
                 name, cost = equipment[idx - 1]
                 if credits >= cost:
                     cursor.execute("UPDATE users SET credits = credits - %s WHERE username = 'Player'", (cost,))
-                    game_state["conn"].commit()
+                    conn.commit()
 
-                    cursor.execute("""
-                        SELECT planet_id FROM planets
-                        WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                        ORDER BY planet_id LIMIT 1
-                    """)
-                    planet_row = cursor.fetchone()
-                    planet_id = planet_row[0] if planet_row else 1
+                    planet_id = get_first_owned_planet_id(db_conn=conn)
 
                     cursor.execute("""
                         INSERT INTO planetary_assets (planet_id, asset_name, asset_type, quantity, base_cost)
                         VALUES (%s, %s, %s, 1, %s)
                         ON DUPLICATE KEY UPDATE quantity = quantity + 1
                     """, (planet_id, name, 'Equipment', cost))
-                    game_state["conn"].commit()
+                    conn.commit()
 
-                    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-                    credits = cursor.fetchone()[0]
+                    credits = get_player_credits(db_conn=conn)
                     print(f"\nPurchased {name}! Remaining credits: {credits:,}")
                 else:
                     print("Not enough credits!")
@@ -488,19 +432,13 @@ def display_planet_details(planet_id: int):
             print(f"  Solar Satellites:   {solar}")
 
         # Show detailed production/consumption breakdown
-        cursor.execute("""
-            SELECT farming_stations, mining_stations, solar_satellites, COUNT(s.ship_id) as ship_count
-            FROM colonies c
-            JOIN planets p ON c.planet_id = p.planet_id
-            LEFT JOIN ships s ON p.planet_id = s.planet_id AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            WHERE c.planet_id = %s GROUP BY c.planet_id, farming_stations, mining_stations, solar_satellites
-        """, (planet_id,))
-        row = cursor.fetchone()
+        infra = planet_info.get('infrastructure', {})
+        farming_stations = int(infra.get('farming_stations', 0)) if infra else 0
+        mining_stations = int(infra.get('mining_stations', 0)) if infra else 0
+        solar_satellites = int(infra.get('solar_satellites', 0)) if infra else 0
 
-        farming_stations = int(row[0]) if row and row[0] else 0
-        mining_stations = int(row[1]) if row and row[1] else 0
-        solar_satellites = int(row[2]) if row and row[2] else 0
-        ship_count = int(row[3]) if row and row[3] else 0
+        fleet_at_planet = get_fleet_at_planet(planet_id, conn)
+        ship_count = sum(item['count'] for item in fleet_at_planet) if fleet_at_planet else 0
 
         # Calculate detailed production/consumption
         food_produced = farming_stations * 15.0
@@ -608,24 +546,15 @@ def handle_system_list():
     print("      SYSTEM LIST (Screen 10)")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT s.system_id, s.name, p.planet_id, p.name as planet_name
-        FROM systems s
-        LEFT JOIN planets p ON s.system_id = p.system_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-        ORDER BY s.name, p.planet_id
-    """)
+    planets = get_player_over_planets(db_conn=game_state["conn"])
 
-    all_planets = cursor.fetchall()
-
-    if not all_planets:
+    if not planets:
         print("\nNo planets discovered in any system.")
-    else:
-        for idx, (system_id, sys_name, planet_id, pname) in enumerate(all_planets, 1):
-            print(f"  [{idx}] {sys_name} (Planet {pname}, ID: {planet_id})")
+        return
 
-    cursor.close()
+    for idx, planet in enumerate(planets, 1):
+        sys_name = planet.get('system_name', 'Unknown')
+        print(f"  [{idx}] {sys_name} (Planet {planet['name']}, ID: {planet['id']})")
 
 
 def save_and_exit():
@@ -653,17 +582,7 @@ def handle_my_assets():
     print("       MY PURCHASED ASSETS")
     print("=" * 60)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT pa.asset_name, pa.asset_type, pa.quantity, pa.base_cost,
-               pa.planet_id, p.name as planet_name
-        FROM planetary_assets pa
-        JOIN planets p ON pa.planet_id = p.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-        ORDER BY pa.asset_type, pa.asset_name
-    """)
-    rows = cursor.fetchall()
-    cursor.close()
+    rows = get_player_assets(db_conn=game_state["conn"])
 
     if not rows:
         print("\nNo assets purchased yet. Visit the Purchase Assets screen to buy ships, infrastructure, or equipment.")
@@ -671,23 +590,24 @@ def handle_my_assets():
 
     # Group by type
     grouped: dict[str, list] = {}
-    for asset_name, asset_type, quantity, base_cost, planet_id, planet_name in rows:
-        if asset_type not in grouped:
-            grouped[asset_type] = []
-        grouped[asset_type].append((asset_name, asset_type, quantity, base_cost, planet_id, planet_name))
+    for row in rows:
+        atype = row.get('asset_type', 'Unknown')
+        if atype not in grouped:
+            grouped[atype] = []
+        grouped[atype].append(row)
 
     total_items = sum(len(v) for v in grouped.values())
-    total_value = sum(r[2] * r[3] for r in rows)
+    total_value = sum(r.get('quantity', 1) * r.get('base_cost', 0) for r in rows)
 
     icons = {'Ship': '[Ship]', 'Infrastructure': '[Infra]', 'Equipment': '[Equip]'}
 
     for asset_type, items in sorted(grouped.items()):
         icon = icons.get(asset_type, '[?]')
-        print(f"\n  --- {icon} {asset_type.upper()} ({len(items)} unique, {sum(it[2] for it in items)} total) ---")
-        for name, atype, qty, cost, pid, pname in items:
-            print(f"      - {name} x{qty}    ({cost:>10,} credits each) -> Planet {pid}: {pname}")
+        print(f"\n  --- {icon} {asset_type.upper()} ({len(items)} unique, {sum(it.get('quantity', 1) for it in items)} total) ---")
+        for item in items:
+            print(f"      - {item['asset_name']} x{item.get('quantity', 1)}    ({item['base_cost']:>10,.0f} credits each) -> Planet {item['planet_id']}: {item['planet_name']}")
 
-    print(f"\n  Total asset value: {total_value:>12,} credits")
+    print(f"\n  Total asset value: {total_value:>12,.0f} credits")
     print("=" * 60)
 
 
@@ -701,18 +621,8 @@ def handle_debug_menu():
     print("       DEBUG MENU (Manual Level Setting)")
     print("=" * 60)
 
-    # Get all owned planets
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name, ps.population,
-               ps.food_level, ps.energy_level, ps.fuel_level,
-               ps.morale, ps.tax_rate
-        FROM planets p
-        JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-
-    planets = cursor.fetchall()
+    # Get all owned planets via game_engine helper
+    planets = get_debug_player_planets(db_conn=game_state["conn"])
 
     if not planets:
         print("\nNo owned planets found.")
@@ -720,11 +630,9 @@ def handle_debug_menu():
 
     print("\n--- Owned Planets ---")
     for idx, planet in enumerate(planets, 1):
-        planet_id, name, pop, food, energy, fuel, morale, tax_rate = planet
-        print(f"  [{idx}] {name} (ID: {planet_id})")
-        print(f"       Pop: {pop}, Food: {food}, Energy: {energy}, Fuel: {fuel}")
-
-    cursor.close()
+        resources = planet.get('resources', {})
+        print(f"  [{idx}] {planet['name']} (ID: {planet['planet_id']})")
+        print(f"       Pop: {planet.get('population', 0)}, Food: {resources.get('food_level', 0)}, Energy: {resources.get('energy_level', 0)}, Fuel: {resources.get('fuel_level', 0)}")
 
     # Show available debug actions
     print("\n--- Debug Actions ---")
@@ -753,6 +661,20 @@ def handle_debug_menu():
     # [7] return to menu, handled in main loop
 
 
+def set_resource(planet_id, resource_type, display_name):
+    """Generic helper to set a single resource level."""
+    selection = input(f"Enter new {display_name}: ").strip()
+    try:
+        value = float(selection)
+        success = adjust_resource_level(planet_id, resource_type, value, db_conn=game_state["conn"])
+        if success:
+            print(f"✓ {display_name} set to {value:.1f}")
+        else:
+            print("✗ Failed to update resource.")
+    except ValueError:
+        print(f"✗ Invalid {display_name}. Please enter a number.")
+
+
 def set_population():
     """Set population for a specific planet."""
     print("\n" + "=" * 50)
@@ -773,18 +695,8 @@ def set_population():
     if selection.isdigit():
         idx = int(selection) - 1
         if 0 <= idx < len(planets):
-            planet_id = planets[idx][0]
-
-            pop_str = input(f"Enter new population for {planets[idx][1]}: ").strip()
-            try:
-                new_pop = int(pop_str)
-                cursor.execute("UPDATE planetary_stats SET population = %s WHERE planet_id = %s", (new_pop, planet_id))
-                game_state["conn"].commit()
-                print(f"✓ Population set to {new_pop:,}")
-            except ValueError:
-                print("✗ Invalid population value. Please enter an integer.")
-
-    cursor.close()
+            planet_id = planets[idx]['id']
+            set_resource(planet_id, 'population', 'population')
 
 
 def set_food_level():
@@ -793,36 +705,23 @@ def set_food_level():
     print("  SET FOOD LEVEL")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name, ps.food_level as current_food
-        FROM planets p
-        JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    planets = cursor.fetchall()
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+
+    if not planets:
+        print("No owned planets found.")
+        return
 
     for idx, planet in enumerate(planets, 1):
-        pid, name, current_food = planet
-        print(f"  [{idx}] {name} - Current: {current_food}")
+        resources = planet.get('resources', {})
+        print(f"  [{idx}] {planet['name']} - Current: {resources.get('food_level', 0):.1f}")
 
     selection = input("\nSelect planet [1-7]: ").strip()
 
     if selection.isdigit():
         idx = int(selection) - 1
         if 0 <= idx < len(planets):
-            planet_id = planets[idx][0]
-
-            food_str = input(f"Enter new food level for {planets[idx][1]}: ").strip()
-            try:
-                new_food = float(food_str)
-                cursor.execute("UPDATE planetary_stats SET food_level = %s WHERE planet_id = %s", (new_food, planet_id))
-                game_state["conn"].commit()
-                print(f"✓ Food level set to {new_food:.1f}")
-            except ValueError:
-                print("✗ Invalid food level. Please enter a number.")
-
-    cursor.close()
+            planet_id = planets[idx]['id']
+            set_resource(planet_id, 'food_level', 'food level')
 
 
 def set_energy_level():
@@ -831,36 +730,23 @@ def set_energy_level():
     print("  SET ENERGY LEVEL")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name, ps.energy_level as current_energy
-        FROM planets p
-        JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    planets = cursor.fetchall()
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+
+    if not planets:
+        print("No owned planets found.")
+        return
 
     for idx, planet in enumerate(planets, 1):
-        pid, name, current_energy = planet
-        print(f"  [{idx}] {name} - Current: {current_energy}")
+        resources = planet.get('resources', {})
+        print(f"  [{idx}] {planet['name']} - Current: {resources.get('energy_level', 0):.1f}")
 
     selection = input("\nSelect planet [1-7]: ").strip()
 
     if selection.isdigit():
         idx = int(selection) - 1
         if 0 <= idx < len(planets):
-            planet_id = planets[idx][0]
-
-            energy_str = input(f"Enter new energy level for {planets[idx][1]}: ").strip()
-            try:
-                new_energy = float(energy_str)
-                cursor.execute("UPDATE planetary_stats SET energy_level = %s WHERE planet_id = %s", (new_energy, planet_id))
-                game_state["conn"].commit()
-                print(f"✓ Energy level set to {new_energy:.1f}")
-            except ValueError:
-                print("✗ Invalid energy level. Please enter a number.")
-
-    cursor.close()
+            planet_id = planets[idx]['id']
+            set_resource(planet_id, 'energy_level', 'energy level')
 
 
 def set_fuel_level():
@@ -869,36 +755,23 @@ def set_fuel_level():
     print("  SET FUEL LEVEL")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name, ps.fuel_level as current_fuel
-        FROM planets p
-        JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    planets = cursor.fetchall()
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+
+    if not planets:
+        print("No owned planets found.")
+        return
 
     for idx, planet in enumerate(planets, 1):
-        pid, name, current_fuel = planet
-        print(f"  [{idx}] {name} - Current: {current_fuel}")
+        resources = planet.get('resources', {})
+        print(f"  [{idx}] {planet['name']} - Current: {resources.get('fuel_level', 0):.1f}")
 
     selection = input("\nSelect planet [1-7]: ").strip()
 
     if selection.isdigit():
         idx = int(selection) - 1
         if 0 <= idx < len(planets):
-            planet_id = planets[idx][0]
-
-            fuel_str = input(f"Enter new fuel level for {planets[idx][1]}: ").strip()
-            try:
-                new_fuel = float(fuel_str)
-                cursor.execute("UPDATE planetary_stats SET fuel_level = %s WHERE planet_id = %s", (new_fuel, planet_id))
-                game_state["conn"].commit()
-                print(f"✓ Fuel level set to {new_fuel:.1f}")
-            except ValueError:
-                print("✗ Invalid fuel level. Please enter a number.")
-
-    cursor.close()
+            planet_id = planets[idx]['id']
+            set_resource(planet_id, 'fuel_level', 'fuel level')
 
 
 def reset_all_levels():
@@ -935,28 +808,16 @@ def list_all_planets():
     print("  ALL PLANETS STATUS")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name,
-               ps.population, ps.food_level, ps.energy_level, ps.fuel_level,
-               ps.morale
-        FROM planets p
-        JOIN planetary_stats ps ON p.planet_id = ps.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-
-    planets = cursor.fetchall()
+    planets = get_debug_player_planets(db_conn=game_state["conn"])
 
     for planet in planets:
-        planet_id, name, pop, food, energy, fuel, morale = planet
-        print(f"\n[{planet_id}] {name}")
-        print(f"  Population:   {pop:,}")
-        print(f"  Food Level:   {food:.1f}")
-        print(f"  Energy Level: {energy:.1f}")
-        print(f"  Fuel Level:   {fuel:.1f}")
-        print(f"  Morale:       {morale}")
-
-    cursor.close()
+        resources = planet.get('resources', {})
+        print(f"\n[{planet['planet_id']}] {planet['name']}")
+        print(f"  Population:   {planet.get('population', 0):,}")
+        print(f"  Food Level:   {resources.get('food_level', 0):.1f}")
+        print(f"  Energy Level: {resources.get('energy_level', 0):.1f}")
+        print(f"  Fuel Level:   {resources.get('fuel_level', 0):.1f}")
+        print(f"  Morale:       {planet.get('morale', 'N/A')}")
 
 
 def simulate_turn():
@@ -977,30 +838,16 @@ def display_home_menu():
     print("       SUPREMACY GAME - MAIN MENU")
     print("=" * 50)
 
-    # Get player overview for stats
-    cursor = game_state["conn"].cursor()
-    cursor.execute("SELECT credits FROM users WHERE username = 'Player'")
-    row = cursor.fetchone()
-    credits = row[0] if row else 0
+    # Get player overview via game_engine helpers
+    credits = get_player_credits(db_conn=game_state["conn"])
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+    owned_planet_count = len(planets)
 
-    cursor.execute("""
-        SELECT p.planet_id FROM planets p
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    owned_planets = cursor.fetchall()
-
-    # Total assets owned across all planets (sum quantities)
-    cursor.execute("""
-        SELECT COALESCE(SUM(quantity), 0) as asset_count FROM planetary_assets pa
-        JOIN planets p ON pa.planet_id = p.planet_id
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    asset_count = cursor.fetchone()[0]
-
-    cursor.close()
+    assets = get_player_assets(db_conn=game_state["conn"])
+    asset_count = sum(a.get('quantity', 1) for a in assets)
 
     print("\n=== Player Status ===")
-    print(f"Owned Planets: {len(owned_planets)}")
+    print(f"Owned Planets: {owned_planet_count}")
     print(f"Assets Owned:  {asset_count}")
     print(f"Credits: {credits:,}")
 

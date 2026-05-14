@@ -31,7 +31,10 @@ DEFAULT_DB_CONFIG = {
 
 # Flag to enable stored procedure batch processing
 # Uses single SQL UPDATE for all planets instead of N individual queries
-USE_STORED_PROCEDURES = True
+# NOTE: When True, only food/energy/fuel/pop are updated. Ship consumption,
+# morale changes, and mineral updates are NOT applied. Set to False to use
+# the per-planet simulate_planet_turn() path which handles all mechanics.
+USE_STORED_PROCEDURES = False
 
 
 def get_db_connection(host=None, user=None, password=None, port=None, database=None) -> Optional[Connection]:
