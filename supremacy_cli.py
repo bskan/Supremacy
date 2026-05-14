@@ -31,7 +31,19 @@ from game_engine import (
     get_fleet_inventory,
     get_astro_survey,
     get_system_planet_list,
-    DEFAULT_DB_CONFIG
+    DEFAULT_DB_CONFIG,
+    # New helper functions
+    run_turn,
+    get_player_credits,
+    get_player_assets,
+    get_first_owned_planet_id,
+    get_asset_by_name,
+    has_player_owned_asset,
+    adjust_resource_level,
+    add_credits_to_player,
+    get_player_over_planets,
+    get_all_systems,
+    get_fleet_at_planet,
 )
 
 
@@ -529,49 +541,29 @@ def handle_battle_screen():
     print("       BATTLE SIMULATION (Screen 7)")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p1.planet_id, p1.name as attacker_name, ps1.population as att_pop,
-               p2.planet_id, p2.name as defender_name, ps2.population as def_pop
-        FROM planets p1
-        JOIN planetary_stats ps1 ON p1.planet_id = ps1.planet_id
-        CROSS JOIN planets p2
-        JOIN planetary_stats ps2 ON p2.planet_id = ps2.planet_id
-        WHERE p1.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-          AND p2.planet_id != p1.planet_id
-    """)
-
-    battles = cursor.fetchall()
-
-    if not battles:
+    # Get all player planets via game_engine helper
+    planets = get_player_over_planets(db_conn=game_state["conn"])
+    if not planets:
         print("\nNo combat data available.")
-    else:
-        for idx, battle in enumerate(battles, 1):
-            p1_id, p1_name, att_pop, p2_id, p2_name, def_pop = battle
+        return
 
-            print(f"\nBattle {idx}:")
-            print(f"  Attacker: {p1_name} (Population: {att_pop:,})")
-            print(f"  Defender: {p2_name} (Population: {def_pop:,})")
+    # Generate battle pairs
+    battle_idx = 0
+    for i, attacker in enumerate(planets):
+        for defender in planets:
+            if attacker['id'] != defender['id']:
+                battle_idx += 1
+                att_fleet = get_fleet_at_planet(attacker['id'], game_state["conn"])
+                att_ship_count = sum(f['count'] for f in att_fleet)
 
-            # Get fleet for this planet
-            cursor.execute("""
-                SELECT COUNT(*) as count, s.ship_type
-                FROM ships s
-                WHERE s.planet_id = %s
-                AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-                GROUP BY ship_type
-            """, (p1_id,))
-            fleet = cursor.fetchone()
+                print(f"\nBattle {battle_idx}:")
+                print(f"  Attacker: {attacker['name']} (Population: {attacker['population']:,}, Ships: {att_ship_count})")
+                print(f"  Defender: {defender['name']} (Population: {defender['population']:,})")
 
-            if fleet:
-                print(f"  Attacker Fleet: {fleet['count']}x {fleet['ship_type']}")
-
-            print("\nResolved Combat:")
-            result = resolve_combat(p1_id, p2_id, game_state["conn"])
-            for line in result.split('\n'):
-                print(f"  {line}")
-
-    cursor.close()
+                print("\nResolved Combat:")
+                result = resolve_combat(attacker['id'], defender['id'], game_state["conn"])
+                for line in result.split('\n'):
+                    print(f"  {line}")
 
 
 def handle_fleet_overview():
@@ -767,21 +759,14 @@ def set_population():
     print("  SET POPULATION")
     print("=" * 50)
 
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id, p.name
-        FROM planets p
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-    planets = cursor.fetchall()
+    planets = get_player_over_planets(db_conn=game_state["conn"])
 
     if not planets:
         print("No owned planets found.")
         return
 
     for idx, planet in enumerate(planets, 1):
-        pid, name = planet
-        print(f"  [{idx}] {name} (ID: {pid})")
+        print(f"  [{idx}] {planet['name']} (ID: {planet['id']})")
 
     selection = input("\nSelect planet [1-7]: ").strip()
 
@@ -982,111 +967,8 @@ def simulate_turn():
     """
     print("\nProcessing game turn...")
 
-    # Get all player planets and update their resources
-    cursor = game_state["conn"].cursor()
-    cursor.execute("""
-        SELECT p.planet_id FROM planets p
-        WHERE p.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-    """)
-
-    player_planets = cursor.fetchall()
-
-    for planet in player_planets:
-        planet_id = planet[0]
-
-        # Get production from infrastructure
-        cursor.execute("""
-            SELECT SUM(farming_stations) as farms,
-                   SUM(mining_stations) as mines,
-                   SUM(solar_satellites) as solar,
-                   COUNT(s.ship_id) as ship_count
-            FROM colonies c
-            JOIN planets p ON c.planet_id = p.planet_id
-            LEFT JOIN ships s ON p.planet_id = s.planet_id AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
-            WHERE p.planet_id = %s
-        """, (planet_id,))
-        row = cursor.fetchone()
-
-        farms = int(row[0]) if row and row[0] else 0
-        mines = int(row[1]) if row and row[1] else 0
-        solar = int(row[2]) if row and row[2] else 0
-        ship_count = int(row[3]) if row and row[3] else 0
-
-        # Calculate production per turn
-        food_produced = farms * 15.0
-        minerals_produced = mines * 8.0
-        energy_produced = solar * 12.0
-        fuel_from_minerals = minerals_produced * 0.5
-        fuel_from_food = food_produced * 0.2
-        total_fuel_produced = fuel_from_minerals + fuel_from_food
-
-        # Get population from planetary_stats table
-        cursor.execute("""
-            SELECT ps.population, ps.food_level, ps.energy_level, ps.fuel_level, ps.morale
-            FROM planetary_stats ps
-            JOIN planets p ON ps.planet_id = p.planet_id
-            WHERE p.planet_id = %s
-        """, (planet_id,))
-        row = cursor.fetchone()
-
-        if not row:
-            continue
-
-        population = row[0]
-        morale = row[4] or 5
-        energy_level = row[2] or 0
-        fuel_level = row[3] or 0
-
-        # Calculate consumption per turn
-        food_consumed = float(population) * 0.5
-        energy_consumed = float(population) * 0.3 + ship_count * 2.0
-        minerals_consumed = ship_count * 1.0
-        fuel_consumed = ship_count * 0.8
-
-        # Calculate population change:
-        # - Natural growth based on morale (when food is adequate): pop * 0.5% * morale
-        # - Starvation loss when food runs low
-
-        population_growth_rate = (morale / 10.0) * 0.005  # e.g., morale=5 => 0.25% growth
-        natural_population_increase = population * population_growth_rate
-
-        food_surplus = round(food_produced - food_consumed, 1)
-
-        population_decrease_from_starvation = 0
-        if food_surplus < -20:  # Critical food shortage
-            starvation_factor = abs(food_surplus) / 25.0  # 1 person lost per 25 units deficit
-            population_decrease_from_starvation = round(population * starvation_factor, 0)
-
-        total_population_change = round(natural_population_increase - population_decrease_from_starvation, 0)
-
-        pop_delta = "+" + f"{total_population_change:+.0f}" if total_population_change > 0 else f"{total_population_change:+.0f}"
-
-        energy_change = round(energy_produced - energy_consumed, 1)
-        fuel_change = round(fuel_from_minerals + fuel_from_food - fuel_consumed, 1)
-
-        print(f"  Planet {planet_id}: Pop {pop_delta}, Food ±{food_surplus:+.1f}, Energy ±{energy_change:+.1f}, Fuel ±{fuel_change:+.1f}")
-
-        # Persist resource and population changes to planetary_stats
-        # Ensure no negative values for population, food_level, energy_level, fuel_level
-        # Use proper SUB() syntax for MariaDB compatibility with negative deltas
-        cursor.execute("""
-            UPDATE planetary_stats
-            SET population = CASE
-                WHEN population + %s < 0 THEN 0
-                ELSE population + %s
-            END,
-                food_level = LEAST(1000000, food_level + %s),
-                energy_level = LEAST(1000000, energy_level + %s),
-                fuel_level = LEAST(1000000, fuel_level + %s)
-            WHERE planet_id = %s
-        """, (total_population_change, total_population_change, food_surplus,
-              energy_produced - energy_consumed, fuel_from_minerals + fuel_from_food - fuel_consumed, planet_id))
-
-    cursor.close()
-
-    game_state["conn"].commit()
-
-    print("\nTurn simulation complete. Resource levels and population updated.")
+    result = run_turn(user_id=1, db_conn=game_state["conn"])
+    print(f"\n{result.get('message', 'Turn simulation complete.')}")
 
 
 def display_home_menu():
