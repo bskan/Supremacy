@@ -1,3 +1,4 @@
 # Supremacy
 
-Coded in Free Claude Code using Qwen 3.5-9b backend.
+Initial Coded in Free Claude Code using Qwen 3.5-9b backend.
+Moved to Qwen3.6-35b
