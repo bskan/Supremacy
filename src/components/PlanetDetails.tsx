@@ -246,7 +246,7 @@ const PlanetDetails: React.FC<PlanetDetailsProps> = ({ planetId, onBack, onBattl
       <div className="action-buttons">
         {isOwned && (
           <>
-            <button onClick={onBattle} className="btn btn-secondary">
+            <button onClick={() => onBattle?.(0, 0)} className="btn btn-secondary">
               &#127881; Initiate Battle with Another Planet
             </button>
             <button onClick={systemList} className="btn btn-secondary">

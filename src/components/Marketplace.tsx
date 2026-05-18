@@ -22,11 +22,92 @@ const Marketplace: React.FC<MarketplaceProps> = ({ onBack }) => {
   const [credits, setCredits] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string>('Loading marketplace...');
+  const [ownedPlanets, setOwnedPlanets] = useState<any[]>([]);
+  const [selectedPlanet, setSelectedPlanet] = useState<number | null>(null);
+  const [barrenPlanets, setBarrenPlanets] = useState<any[]>([]);
+  const [hasTerraformer, setHasTerraformer] = useState(false);
   const tabRef = React.useRef<'ships' | 'infrastructure' | 'equipment'>('ships');
 
   useEffect(() => {
     loadMarketplace();
+    loadOwnedPlanets();
+    loadBarrenPlanets();
+    loadTerraformerStatus();
   }, []);
+
+  const loadOwnedPlanets = async () => {
+    try {
+      const res = await fetch('/api/planets');
+      if (res.ok) {
+        const data = await res.json();
+        setOwnedPlanets(data);
+        // Auto-select first planet if none selected
+        if (!selectedPlanet && data.length > 0) {
+          setSelectedPlanet(data[0].id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading owned planets:', error);
+    }
+  };
+
+  const loadBarrenPlanets = async () => {
+    try {
+      const res = await fetch('/api/systems');
+      if (res.ok) {
+        const systems: any[] = await res.json();
+        const barren: any[] = [];
+        for (const sys of systems) {
+          if (sys.planets) {
+            for (const p of sys.planets) {
+              if (p.population === 0 || !p.population) {
+                barren.push(p);
+              }
+            }
+          }
+        }
+        setBarrenPlanets(barren);
+      }
+    } catch (error) {
+      console.error('Error loading barren planets:', error);
+    }
+  };
+
+  const loadTerraformerStatus = async () => {
+    try {
+      const res = await fetch('/api/player/assets');
+      if (res.ok) {
+        const data: any[] = await res.json();
+        setHasTerraformer(data.some((a: any) => a.asset_name === 'Terraformer'));
+      }
+    } catch (error) {
+      console.error('Error checking Terraformer:', error);
+    }
+  };
+
+  const terraformPlanet = async (planetId: number, planetName: string) => {
+    try {
+      setIsLoading(true);
+      setMessage(`Terraforming ${planetName}...`);
+      const res = await fetch(`/api/terraform/${planetId}`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        setMessage(data.detail || data.message || 'Terraforming failed');
+        setIsLoading(false);
+        return;
+      }
+      const data = await res.json();
+      setMessage(data.message || 'Terraforming successful!');
+      loadBarrenPlanets();
+      loadTerraformerStatus();
+      loadOwnedPlanets();
+    } catch (error: any) {
+      console.error('Error terraforming planet:', error);
+      setMessage(`Error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const loadMarketplace = async () => {
     try {
@@ -101,7 +182,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({ onBack }) => {
       const res = await fetch('/api/marketplace/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planet_id: 1, asset_name: assetName }),
+        body: JSON.stringify({ planet_id: selectedPlanet, asset_name: assetName }),
       });
 
       if (!res.ok) {
@@ -144,6 +225,71 @@ const Marketplace: React.FC<MarketplaceProps> = ({ onBack }) => {
         <div className={`message-box ${isLoading ? 'loading' : ''}`}>
           <strong>Status:</strong> {message}
         </div>
+
+        {/* Planet Selector */}
+        {ownedPlanets.length > 0 && (
+          <div className="dest-selector" style={{marginBottom: '8px'}}>
+            <label>Target Planet: </label>
+            <select value={selectedPlanet || ''} onChange={(e) => setSelectedPlanet(e.target.value ? Number(e.target.value) : null)}>
+              {ownedPlanets.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Terraformer Section */}
+        {!hasTerraformer && barrenPlanets.length > 0 && (
+          <div className="info-section" style={{ marginBottom: 16 }}>
+            <h3>&#127758; Terraformer - Available to Purchase</h3>
+            <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 8 }}>
+              The Terraformer allows you to terraform barren planets (set population to 100, adds 1 farm + 1 solar). Cost: 2,000 credits.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => purchaseAsset('Terraformer', 2000)}
+                disabled={credits < 2000}
+                className="btn btn-primary"
+                style={{ background: credits >= 2000 ? '#3b82f6' : '#374151' }}
+              >
+                {credits >= 2000 ? '&#127758; Purchase Terraformer ($2,000)' : '&#9888; Not Enough Credits'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {hasTerraformer && barrenPlanets.length > 0 && (
+          <div className="info-section" style={{ marginBottom: 16 }}>
+            <h3>&#127758; Terraformer - Apply to a Barren Planet</h3>
+            <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 8 }}>
+              You own a Terraformer. Select a barren planet to terraform:
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {barrenPlanets.map((p: any) => (
+                <div key={p.id} style={{ border: '1px solid #374151', borderRadius: 6, padding: 8, minWidth: 140 }}>
+                  <div style={{ fontSize: 13, color: '#e5e7eb', marginBottom: 4 }}>{p.name}</div>
+                  <button
+                    onClick={() => terraformPlanet(p.id, p.name)}
+                    disabled={isLoading}
+                    className="btn btn-primary"
+                    style={{ fontSize: 11, padding: '2px 8px' }}
+                  >
+                    {isLoading ? 'Working...' : '&#127758; Terraform'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {barrenPlanets.length === 0 && (
+          <div className="info-section" style={{ marginBottom: 16 }}>
+            <h3>&#127758; Terraformer</h3>
+            <p style={{ color: '#94a3b8', fontSize: 13 }}>
+              No barren planets available. All planets are already colonized.
+            </p>
+          </div>
+        )}
 
         {/* Catalog Tabs */}
         <nav className="catalog-tabs">
@@ -222,7 +368,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({ onBack }) => {
               {tabRef.current === 'infrastructure' && assets.infrastructure.length > 0 && (
                 <div className="catalog-section infrastructure">
                   <h3>&#128736; Available Infrastructure</h3>
-                  {assets.infrastructure.map((item: any, idx: number) => (
+                  {assets.infrastructure
+                    .filter(item => !hasTerraformer || item.name !== 'Terraformer')
+                    .map((item: any, idx: number) => (
                     <div key={idx} className={`asset-card ${credits < item.base_cost ? 'out-of-credits' : ''}`}>
                       <div className="asset-header">
                         <img
@@ -238,7 +386,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({ onBack }) => {
                           <span className="out-of-credits-badge">&#9888; Out of Credits</span>
                         )}
                       </div>
-                      <p className="asset-desc">{item.description || 'Planet development infrastructure'}</p>
+                      <p className="asset-desc">{item.name === 'Terraformer'
+                        ? 'Terraform a barren planet (set population=100, add 1 farm + 1 solar). Apply separately after purchase.'
+                        : item.description || 'Planet development infrastructure'}</p>
                       <div className="asset-price">₫{Math.floor(item.base_cost).toLocaleString()}</div>
                       <button
                         onClick={() => purchaseAsset(item.name, item.base_cost)}

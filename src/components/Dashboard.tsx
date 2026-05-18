@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 // Assuming api_service.ts handles all API interactions
 import * as ApiService from '../services/api_service';
+import EventLog from './EventLog';
 
 /** Helper to format large numbers with commas */
 const formatNumber = (num: any): string => {
@@ -71,7 +72,7 @@ const Dashboard: React.FC = () => {
             }
 
             // Merge fleet data into planet objects
-            const planetsWithFleet = planetStates.map(planet => ({
+            const planetsWithFleet: any[] = planetStates.map((planet: any) => ({
                 ...planet,
                 fleet: fleetMap[planet.planet_id] || []
             }));
@@ -96,7 +97,7 @@ const Dashboard: React.FC = () => {
             await ApiService.advanceTurn();
             setMessage("✅ Turn advanced successfully! Check the planet states for updates.");
             fetchPlanetData(); // Refetch data after successful turn
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error advancing turn:", error);
             setMessage(`❌ Failed to advance turn: ${error.message}`);
         } finally {
@@ -111,7 +112,7 @@ const Dashboard: React.FC = () => {
             await ApiService.moveShip(shipId, destPlanetId);
             setMessage("✅ Ship movement successful! The map will refresh shortly.");
             fetchPlanetData(); // Refetch data after successful action
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error moving ship:", error);
             setMessage(`❌ Failed to move ship: ${error.message}. Check fuel or pathfinding.`);
         } finally {
@@ -167,7 +168,8 @@ const Dashboard: React.FC = () => {
                 ))}
             </div>
 
-            {/* Utility function components would live here */}
+            {/* Random Events Log */}
+            <EventLog />
         </div>
     );
 };

@@ -44,6 +44,7 @@ from game_engine import (
     get_player_over_planets,
     get_all_systems,
     get_fleet_at_planet,
+    create_ship as ge_create_ship,
 )
 
 
@@ -227,6 +228,15 @@ def handle_purchase_assets():
                         ON DUPLICATE KEY UPDATE quantity = quantity + 1
                     """, (planet_id, name, 'Ship', cost))
                     conn.commit()
+
+                    # Create ship record
+                    user_id_cursor = conn.cursor()
+                    user_id_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+                    uid = user_id_cursor.fetchone()[0]
+                    user_id_cursor.close()
+                    ship_id = ge_create_ship(uid, planet_id, name, conn)
+                    if ship_id:
+                        print(f"  Ship created with ship_id={ship_id}")
 
                     credits = get_player_credits(db_conn=conn)
                     print(f"\nPurchased {name}! Remaining credits: {credits:,}")

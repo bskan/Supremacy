@@ -160,7 +160,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
         }
       }
 
-      const incrementValues = {
+      const incrementValues: Record<string, number> = {
         'food_level': 1000,
         'energy_level': 1000,
         'fuel_level': 1000,
@@ -185,7 +185,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ onBack }) => {
       }
 
       // Map button type names to actual resource types
-      const typeMap = {
+      const typeMap: Record<string, string> = {
         'food': 'food_level',
         'energy': 'energy_level',
         'fuel': 'fuel_level',

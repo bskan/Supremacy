@@ -1,113 +1,91 @@
 // api_service.ts - Client-side wrapper for all Supremacy API calls
 
-/**
- * IMPORTANT: These functions assume a global Axios instance is configured
- * to point to the running backend server (e.g., 'http://localhost:8000/api').
- */
-
-
-/**
- * Retrieves a snapshot of all active planets with their full database data.
- * @returns {Promise<Array<{planet_id: number, name: string, population: number, resources: any, infrastructure: any}>>}
- */
 export async function getDashboardState() {
     const response = await fetch('/api/systems/all');
     if (!response.ok) throw new Error('Failed to load dashboard state');
     return response.json();
 }
 
-/**
- * Executes a full turn, calculating resource flow and triggering AI actions.
- */
 export async function advanceTurn() {
-    const response = await axios.post('/api/turn/advance');
-    if (response.status === 200) return true;
-    throw new Error(response.data.detail || 'Failed to advance turn.');
+    const response = await fetch('/api/turn/advance', { method: 'POST' });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to advance turn.');
+    }
+    return true;
 }
 
-/**
- * Attempts to move a ship between two planets.
- */
 export async function moveShip(shipId: number, destinationPlanetId: number) {
-    const payload = {
-        ship_id: shipId,
-        destination_planet_id: destinationPlanetId
-    };
-    const response = await axios.post('/api/action/move_ship', payload);
-    if (response.status === 200) return true;
-    throw new Error(response.data.detail || 'Failed to move ship.');
+    const response = await fetch('/api/action/move_ship', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ship_id: shipId, destination_planet_id: destinationPlanetId }),
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to move ship.');
+    }
+    return true;
 }
 
-/**
- * Executes combat between two planets.
- */
 export async function resolveCombat(attackerPlanetId: number, defenderPlanetId: number) {
-    const payload = {
-        attacker_planet_id: attackerPlanetId,
-        defender_planet_id: defenderPlanetId
-    };
-    const response = await axios.post('/api/action/battle', payload);
-    if (response.status === 200) return true;
-    throw new Error(response.data.detail || 'Failed to resolve combat.');
+    const response = await fetch('/api/action/battle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attacker_planet_id: attackerPlanetId, defender_planet_id: defenderPlanetId }),
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to resolve combat.');
+    }
+    return true;
 }
 
-/**
- * Retrieves player's current credits balance.
- */
 export async function getPlayerCredits() {
-    const response = await axios.get('/api/player/credits');
-    return response.data;
+    const response = await fetch('/api/player/credits');
+    if (!response.ok) throw new Error('Failed to load credits');
+    return response.json();
 }
 
-/**
- * Purchases an asset (ship, infrastructure, or equipment) from the marketplace.
- */
 export async function purchaseAsset(planetId: number, assetName: string) {
-    const payload = { planet_id: planetId, asset_name: assetName };
-    const response = await axios.post('/api/marketplace/purchase', payload);
-    return response.data;
+    const response = await fetch('/api/marketplace/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planet_id: planetId, asset_name: assetName }),
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to purchase asset.');
+    }
+    return response.json();
 }
 
-/**
- * Retrieves available assets from the marketplace catalog.
- */
 export async function getMarketplaceCatalog() {
-    const response = await axios.get('/api/marketplace');
-    return response.data;
+    const response = await fetch('/api/marketplace');
+    if (!response.ok) throw new Error('Failed to load marketplace');
+    return response.json();
 }
 
-/**
- * Retrieves a list of all systems in the game.
- */
 export async function getSystems() {
-    const response = await axios.get('/api/systems');
-    return response.data;
+    const response = await fetch('/api/systems');
+    if (!response.ok) throw new Error('Failed to load systems');
+    return response.json();
 }
 
-/**
- * Retrieves planets grouped by system (system_id as key).
- */
 export async function getSystemPlanets(systemId: number) {
-    const response = await axios.get(`/api/planets/system/${systemId}`);
-    return response.data;
+    const response = await fetch(`/api/planets/system/${systemId}`);
+    if (!response.ok) throw new Error('Failed to load system planets');
+    return response.json();
 }
 
-/**
- * Retrieves a single planet's detailed state.
- */
 export async function getPlanetDetails(planetId: number) {
-    const response = await axios.get('/api/planet/' + planetId);
-    return response.data;
+    const response = await fetch(`/api/planet/${planetId}`);
+    if (!response.ok) throw new Error('Failed to load planet details');
+    return response.json();
 }
 
-/**
- * Formats image URL for static asset loading (from images/ folder).
- * @param imageName - Image filename from database (e.g., 'battle_cruiser.png')
- * @returns Full path to image in /images directory
- */
 export function getImageUrl(imageName: string | null): string {
     if (!imageName) return '';
-    // Add .png extension if missing and prefix with images/ path
     const name = imageName.endsWith('.png') ? imageName : imageName + '.png';
     return `/images/${name}`;
 }

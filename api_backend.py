@@ -32,6 +32,14 @@ from game_engine import (
     get_all_systems as ge_get_all_systems,
     get_fleet_at_planet as ge_get_fleet_at_planet,
     run_turn,
+    create_ship,
+    get_player_ships,
+    trigger_random_events,
+    get_recent_events,
+    transfer_ships as ge_transfer_ships,
+    load_cargo as ge_load_cargo,
+    unload_cargo as ge_unload_cargo,
+    get_transfer_data as ge_get_transfer_data,
 )
 
 
@@ -59,6 +67,7 @@ class PlanetInfo(BaseModel):
     tax_rate: float
     resources: Dict[str, Any]  # food_level, energy_level, fuel_level
     infrastructure: Dict[str, Any]  # farming_stations, mining_stations, solar_satellites
+    fleet: List[Dict[str, Any]] = []  # ship_type counts
 
 
 class SystemInfo(BaseModel):
@@ -563,6 +572,25 @@ class CombatRequest(BaseModel):
     attacker_planet_id: int
     defender_planet_id: int
 
+
+class FleetTransferRequest(BaseModel):
+    from_planet_id: int
+    to_planet_id: int
+    ship_type: str
+    quantity: int = 1
+
+
+class LoadCargoRequest(BaseModel):
+    planet_id: int
+    ship_type: str = "CargoShip"
+    resource_type: str  # food, energy, mineral, fuel
+    quantity: int = 100
+
+
+class UnloadCargoRequest(BaseModel):
+    planet_id: int
+    resource_type: str  # food, energy, mineral, fuel
+
 # --- API Endpoints ---
 
 # =============================================================================
@@ -713,7 +741,8 @@ def get_planet_details(planet_id: int):
             morale=int(row['morale']) if row.get('morale') else 5,
             tax_rate=float(row['tax_rate']) if row.get('tax_rate') else 1.0,
             resources={k: float(v) for k, v in resources.items()},
-            infrastructure=infrastructure
+            infrastructure=infrastructure,
+            fleet=fleet_items_raw
         )
     except HTTPException:
         raise
@@ -735,24 +764,71 @@ def get_fleet_at_planet(planet_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/systems")
-def get_all_systems():
-    """Get list of all systems (CLI: System List Screen 10)."""
+@app.get("/api/planet/{planet_id}/fleet/details")
+def get_fleet_details(planet_id: int):
+    """Get individual ship records at a planet (for ship selection in fleet management)."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     try:
-        systems = ge_get_all_systems(db_conn=conn)
-        # Convert dicts to SystemInfo for consistency
-        result = [
-            SystemInfo(
-                system_id=s['system_id'],
-                name=s['name'],
-                planets=[]
-            )
-            for s in systems
-        ]
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT s.ship_id, s.ship_type, s.planet_id, s.docking_bay_slot, s.heading
+            FROM ships s
+            WHERE s.planet_id = %s AND s.owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            ORDER BY s.docking_bay_slot, s.ship_type
+        """, (planet_id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/systems")
+def get_all_systems():
+    """Get list of all systems with their planets (for terraform UI)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT s.system_id, s.name,
+                   COUNT(DISTINCT p.planet_id) as planet_count
+            FROM systems s
+            LEFT JOIN planets p ON p.system_id = s.system_id
+            GROUP BY s.system_id, s.name
+            ORDER BY s.system_id
+        """)
+        systems_data = cursor.fetchall()
+
+        result = []
+        for sys in systems_data:
+            cursor.execute("""
+                SELECT p.planet_id as id, p.name, ps.population, p.owner_user_id,
+                       u.username as owner_name
+                FROM planets p
+                LEFT JOIN users u ON p.owner_user_id = u.user_id
+                LEFT JOIN planetary_stats ps ON ps.planet_id = p.planet_id
+                WHERE p.system_id = %s
+                ORDER BY p.planet_id
+            """, (sys['system_id'],))
+            sys_planets = cursor.fetchall()
+            # Convert Decimal to int for JSON
+            for sp in sys_planets:
+                for k, v in sp.items():
+                    if hasattr(v, 'item'): sp[k] = v.item()
+            result.append({
+                'system_id': sys['system_id'],
+                'name': sys['name'],
+                'planets': sys_planets,
+            })
+
+        cursor.close()
         return result if result else [{'system_id': 1, 'name': 'System 1', 'planets': []}]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -996,7 +1072,7 @@ def purchase_asset(request: PurchaseRequest):
         # Get the actual planet_id for assignment (use first owned planet or the one provided)
         planet_id = get_first_owned_planet_id(db_conn=conn)
 
-        # For infrastructure items, update the colonies table so they actually appear on the planet
+        # For Infrastructure items (except Terraformer which is applied via /api/terraform/{id}), update colonies table
         if asset_row['category'] == 'Infrastructure':
             if request.asset_name == 'EnergySatellite':
                 cursor.execute("""
@@ -1004,14 +1080,8 @@ def purchase_asset(request: PurchaseRequest):
                     VALUES (%s, 1)
                     ON DUPLICATE KEY UPDATE solar_satellites = solar_satellites + 1
                 """, (planet_id,))
-            elif request.asset_name == 'Terraformer':
-                cursor.execute("""
-                    INSERT INTO colonies (planet_id, farming_stations, solar_satellites)
-                    VALUES (%s, 1, 1)
-                    ON DUPLICATE KEY UPDATE
-                        farming_stations = farming_stations + 1,
-                        solar_satellites = solar_satellites + 1
-                """, (planet_id,))
+            # Terraformer: asset is recorded but NOT auto-applied.
+            # Player must use POST /api/terraform/{planet_id} to apply it.
 
         # Determine asset_type: equipment items get 'Equipment' type regardless of their catalog category
         catalog_type = asset_row['category']
@@ -1024,6 +1094,17 @@ def purchase_asset(request: PurchaseRequest):
             VALUES (%s, %s, %s, 1, %s)
             ON DUPLICATE KEY UPDATE quantity = quantity + 1
         """, (planet_id, request.asset_name, catalog_type, cost))
+
+        # Create ship record if purchasing a ship
+        if asset_row['category'] == 'Ship':
+            user_id_cursor = conn.cursor()
+            user_id_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+            uid = user_id_cursor.fetchone()[0]
+            user_id_cursor.close()
+            ship_id = create_ship(player_user_id=uid, planet_id=planet_id, ship_type=request.asset_name, db_conn=conn)
+            if ship_id:
+                print(f"Created ship record ship_id={ship_id} for {request.asset_name}")
+
         conn.commit()
 
         # Get new credit balance
@@ -1154,19 +1235,100 @@ def get_player_assets():
 @app.post("/api/action/move_ship")
 def move_ship(request: ShipMoveRequest):
     """Attempts to move a ship and deducts fuel cost transactionally."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
     try:
         success = process_ship_movement(
             ship_id=request.ship_id,
-            destination_planet_id=request.destination_planet_id
+            destination_planet_id=request.destination_planet_id,
+            db_conn=conn
         )
         if success:
+            conn.commit()
             return {"status": "Success", "message": f"Ship moved successfully to planet {request.destination_planet_id}."}
         else:
+            conn.rollback()
             raise HTTPException(status_code=400, detail="Movement failed (e.g., insufficient fuel or invalid destination).")
-
     except Exception as e:
+        conn.rollback()
         print(f"API error during ship move: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.get("/api/fleet/{planet_id}/transfer")
+def get_transfer_planet(planet_id: int):
+    """Get ships, cargo, and destinations for fleet transfer UI."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        uid_cursor = conn.cursor()
+        uid_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+        user_id = uid_cursor.fetchone()[0]
+        uid_cursor.close()
+        data = ge_get_transfer_data(user_id, planet_id, conn)
+        conn.close()
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fleet/transfer")
+def transfer_ships_endpoint(request: FleetTransferRequest):
+    """Transfer ships between player's planets. Costs 1 fuel per ship."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        uid_cursor = conn.cursor()
+        uid_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+        user_id = uid_cursor.fetchone()[0]
+        uid_cursor.close()
+        result = ge_transfer_ships(user_id, request.from_planet_id, request.to_planet_id, request.ship_type, request.quantity, conn)
+        conn.close()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fleet/cargo/load")
+def load_cargo_endpoint(request: LoadCargoRequest):
+    """Load cargo onto a ship at a planet."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        uid_cursor = conn.cursor()
+        uid_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+        user_id = uid_cursor.fetchone()[0]
+        uid_cursor.close()
+        result = ge_load_cargo(user_id, request.planet_id, request.ship_type, request.resource_type, request.quantity, conn)
+        conn.close()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fleet/cargo/unload")
+def unload_cargo_endpoint(request: UnloadCargoRequest):
+    """Unload cargo from a planet."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        uid_cursor = conn.cursor()
+        uid_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+        user_id = uid_cursor.fetchone()[0]
+        uid_cursor.close()
+        result = ge_unload_cargo(user_id, request.planet_id, request.resource_type, conn)
+        conn.close()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/action/battle")
@@ -1271,3 +1433,87 @@ def add_player_credits(credits_to_add: int = 10000):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# Random Events Endpoints
+# =============================================================================
+
+@app.get("/api/events")
+def get_player_events(limit: int = 20):
+    """Get recent random game events for the player."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        events = get_recent_events(1, limit=limit, db_conn=conn)
+        return events
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/terraform/{planet_id}")
+def terraform_planet(planet_id: int):
+    """Apply Terraformer to a planet. Requires owning a Terraformer asset."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        # Check if player owns a Terraformer
+        uid_cursor = conn.cursor()
+        uid_cursor.execute("SELECT user_id FROM users WHERE username = 'Player'")
+        uid = uid_cursor.fetchone()[0]
+        uid_cursor.close()
+
+        if not has_player_owned_asset(uid, 'Terraformer', conn):
+            cursor.close()
+            return {"status": "error", "message": "You need to purchase a Terraformer first."}
+
+        # Check if planet exists and is barren (population == 0)
+        cursor.execute("SELECT planet_id, name, population, owner_user_id FROM planets WHERE planet_id = %s", (planet_id,))
+        planet = cursor.fetchone()
+        if not planet:
+            cursor.close()
+            return {"status": "error", "message": f"Planet {planet_id} not found."}
+
+        # Can only terraform barren (unowned, population=0) planets
+        if planet['population'] and planet['population'] > 0:
+            cursor.close()
+            return {"status": "error", "message": f"'{planet['name']}' already has population. Cannot terraform."}
+
+        # Apply terraforming effects
+        new_pop = 100
+        cursor.execute("""
+            UPDATE planets
+            SET population = %s,
+                owner_user_id = (SELECT user_id FROM users WHERE username = 'Player')
+            WHERE planet_id = %s
+        """, (new_pop, planet_id))
+
+        # Add infrastructure to the colony record (or insert if doesn't exist)
+        cursor.execute("""
+            INSERT INTO colonies (planet_id, farming_stations, solar_satellites)
+            VALUES (%s, 1, 1)
+            ON DUPLICATE KEY UPDATE
+                farming_stations = farming_stations + 1,
+                solar_satellites = solar_satellites + 1
+        """, (planet_id,))
+
+        conn.commit()
+        cursor.close()
+        return {
+            "status": "success",
+            "message": f"Terraformed planet '{planet['name']}'! Population: {new_pop}",
+            "planet_id": planet_id,
+            "planet_name": planet['name'],
+            "population": new_pop,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()

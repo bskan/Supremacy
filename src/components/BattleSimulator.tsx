@@ -19,6 +19,7 @@ const BattleSimulator: React.FC<BattleSimulatorProps> = ({ onBack }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedBattle, setSelectedBattle] = useState<any | null>(null);
   const [battleResult, setBattleResult] = useState<string>("");
+  const [battleData, setBattleData] = useState<any>(null);
   const [isResolving, setIsResolving] = useState(false);
   const [message, setMessage] = useState("Ready to simulate combat...");
   const [playerCredits, setPlayerCredits] = useState<number | null>(null);
@@ -63,8 +64,8 @@ const BattleSimulator: React.FC<BattleSimulatorProps> = ({ onBack }) => {
 
         if (neutralPlanets.length > 0) {
           // Create battle pairs for first few combos
-          ownedPlanets.slice(0, 2).forEach(attacker => {
-            neutralPlanets.slice(0, 2).forEach(defender => {
+          ownedPlanets.slice(0, 2).forEach((attacker: any) => {
+            neutralPlanets.slice(0, 2).forEach((defender: any) => {
               battles.push({
                 attacker_id: attacker.id,
                 defender_id: defender.id,
@@ -91,11 +92,12 @@ const BattleSimulator: React.FC<BattleSimulatorProps> = ({ onBack }) => {
     }
   };
 
-  // Resolve single battle (calls API endpoint)
+ // Resolve single battle (calls API endpoint)
   const resolveBattle = async (attackerId: number, defenderId: number) => {
     try {
       setIsResolving(true);
       setBattleResult("Simulating combat...");
+      setBattleData(null);
 
       const res = await fetch('/api/action/battle', {
         method: 'POST',
@@ -110,7 +112,32 @@ const BattleSimulator: React.FC<BattleSimulatorProps> = ({ onBack }) => {
 
       if (res.ok) {
         setBattleResult(data.message || "Combat resolved successfully!");
-        setMessage(`Battle Result: ${battleResult}`);
+        // Parse combat report into structured data
+        const report = data.message || '';
+        const lines = report.split('\n');
+        const parsed: any = { attackerName: '', defenderName: '', attackerPower: 0, defenderPower: 0, attackerFleet: 0, defenderFleet: 0, outcome: '' };
+        for (const line of lines) {
+          if (line.startsWith('Attacker combat power:')) {
+            const m = line.match(/combat power: (\d+)/);
+            if (m) parsed.attackerPower = parseInt(m[1]);
+          }
+          if (line.startsWith('Defender combat power:')) {
+            const m = line.match(/combat power: (\d+)/);
+            if (m) parsed.defenderPower = parseInt(m[1]);
+          }
+          if (line.match(/fleet:\s*\d+/)) {
+            const am = line.match(/fleet:\s*(\d+)/);
+            if (am) { parsed.attackerFleet = parseInt(am[1]); parsed.defenderFleet = parsed.defenderFleet || 0; }
+          }
+          if (line.includes('Attacker wins') || line.includes('overwhelmed') || line.includes('stalemate') || line.includes('Superior')) {
+            if (line.includes('stalemate')) parsed.outcome = 'Stalemate';
+            else if (line.includes('overwhelmed')) parsed.outcome = 'Defender Victory';
+            else if (line.includes('Superior')) parsed.outcome = 'Attacker Wins (Resources)';
+            else parsed.outcome = 'Attacker Wins';
+          }
+        }
+        setBattleData(parsed);
+        setMessage(`Battle Result: ${parsed.outcome || 'Resolved'}`);
       } else {
         setBattleResult(data.detail || `Failed to resolve combat`);
         setMessage(`Battle Failed: ${data.detail}`);
@@ -223,11 +250,25 @@ const BattleSimulator: React.FC<BattleSimulatorProps> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* Combat Result Text - CLI style */}
+        {/* Combat Result */}
         {battleResult && (
           <div className="combat-result">
             <h4>&#128342; Combat Report:</h4>
-            <pre>{battleResult}</pre>
+            {battleData ? (
+              <div>
+                <div className="battle-side attacker" style={{padding: '8px', marginBottom: '4px', background: '#f0f0f0', borderRadius: '4px'}}>
+                  <strong>{selectedBattle?.attacker_name}</strong> → Power: {battleData.attackerPower} (Fleet: {battleData.attackerFleet}, Mining: +, Pop: +)
+                </div>
+                <div className="battle-side defender" style={{padding: '8px', background: '#f0f0f0', borderRadius: '4px'}}>
+                  <strong>{selectedBattle?.defender_name}</strong> → Power: {battleData.defenderPower} (Fleet: {battleData.defenderFleet}, Mining: +, Pop: +)
+                </div>
+                <div style={{marginTop: '8px', fontWeight: 'bold', color: battleData.outcome?.includes('Wins') || battleData.outcome?.includes('Victory') ? '#27ae60' : '#e74c3c'}}>
+                  Result: {battleData.outcome || 'Resolved'}
+                </div>
+              </div>
+            ) : (
+              <pre>{battleResult}</pre>
+            )}
           </div>
         )}
 

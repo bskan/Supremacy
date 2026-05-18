@@ -12,6 +12,7 @@ BATCH PROCESSING:
 
 from typing import Dict, Any, Optional, List
 import mysql.connector
+import random
 
 # Import the correct Connection class for mysql-connector-python 8.x+
 try:
@@ -34,7 +35,7 @@ DEFAULT_DB_CONFIG = {
 # NOTE: When True, only food/energy/fuel/pop are updated. Ship consumption,
 # morale changes, and mineral updates are NOT applied. Set to False to use
 # the per-planet simulate_planet_turn() path which handles all mechanics.
-USE_STORED_PROCEDURES = False
+USE_STORED_PROCEDURES = True
 
 
 def get_db_connection(host=None, user=None, password=None, port=None, database=None) -> Optional[Connection]:
@@ -259,9 +260,7 @@ def resolve_combat(attacker_planet_id: int, defender_planet_id: int, db_conn=Non
         att_fleet = cursor.fetchone()['count'] or 0
 
         cursor.execute("""
-            SELECT COUNT(*) as count
-            FROM ships
-            WHERE planet_id = %s AND owner_user_id IN (SELECT user_id FROM users WHERE username = 'Player')
+            SELECT COUNT(*) as count FROM ships WHERE planet_id = %s
         """, (defender_planet_id,))
         def_fleet = cursor.fetchone()['count'] or 0
 
@@ -319,69 +318,45 @@ def run_turn(user_id: int, db_conn=None) -> Dict[str, Any]:
         return {"turn_complete": True, "message": "Turn simulated (no DB)"}
 
     try:
-        cursor = db_conn.cursor()
+        cursor = db_conn.cursor(dictionary=True)
 
-        # Use stored procedure for batch processing if enabled
-        if USE_STORED_PROCEDURES:
-            # Call the stored procedure for batch turn processing
-            cursor.callproc("process_player_turns_batch", (user_id,))
-            rows_updated = cursor.rowcount if hasattr(cursor, 'rowcount') else 0
+        # Get current turn number from counter table
+        cursor.execute("""
+            SELECT value FROM game_state WHERE `key` = 'turn_counter'
+        """)
+        row = cursor.fetchone()
+        turn_number = (row['value'] if row else 0) + 1
+        cursor.execute("""
+            INSERT INTO game_state (`key`, value) VALUES ('turn_counter', %s)
+            ON DUPLICATE KEY UPDATE value = %s
+        """, (turn_number, turn_number))
+        db_conn.commit()
 
-            return {
-                "turn_complete": True,
-                "message": f"Turn simulated via stored procedure ({rows_updated} planets updated)",
-                "method": "stored_procedure"
-            }
-        else:
-            # Legacy per-planet processing (original implementation)
-            # Get player's owned planets
-            cursor.execute("SELECT planet_id FROM planets WHERE owner_user_id = %s", (user_id,))
-            planets = cursor.fetchall()
+        # Call the stored procedure for batch turn processing
+        cursor.callproc("process_player_turns_batch", (user_id,))
+        cursor.close()
+        db_conn.commit()
 
-            total_food_produced = 0
-            total_food_consumed = 0
-            total_mineral_produced = 0
-            total_mineral_consumed = 0
-            total_energy_produced = 0
-            total_energy_consumed = 0
-            total_fuel_produced = 0
-            total_fuel_consumed = 0
-            population_changes = []
+        # Trigger random events after turn processing
+        events = trigger_random_events(user_id, turn_number, db_conn)
 
-            for planet in planets:
-                result = simulate_planet_turn(planet['planet_id'])
-                total_food_produced += result.get('food_produced', 0)
-                total_food_consumed += result.get('food_consumed', 0)
-                total_mineral_produced += result.get('minerals_produced', 0)
-                total_mineral_consumed += result.get('minerals_consumed', 0)
-                total_energy_produced += result.get('energy_produced', 0)
-                total_energy_consumed += result.get('energy_consumed', 0)
-                total_fuel_produced += result.get('fuel_produced', 0)
-                total_fuel_consumed += result.get('fuel_consumed', 0)
-                if result.get('population_delta') != 0:
-                    population_changes.append(f"{planet['planet_id']}: pop {result.get('population_delta', 0)}")
-
-            cursor.close()
-            db_conn.commit()
-
-            return {
-                "turn_complete": True,
-                "message": "Turn simulated",
-                "method": "legacy" if not USE_STORED_PROCEDURES else "stored_procedure"
-            }
+        event_summary = ""
+        if events:
+            bad = [e for e in events if e['severity'] == 'bad']
+            good = [e for e in events if e['severity'] == 'good']
+            parts = []
+            if bad:
+                parts.append(f"⚠ Bad events: {len(bad)}")
+            if good:
+                parts.append(f"+ Good events: {len(good)}")
+            event_summary = "; ".join(parts)
 
         return {
             "turn_complete": True,
-            "message": "Turn processed successfully",
-            "total_food_produced": round(total_food_produced, 2),
-            "total_food_consumed": round(total_food_consumed, 2),
-            "total_mineral_produced": round(total_mineral_produced, 2),
-            "total_mineral_consumed": round(total_mineral_consumed, 2),
-            "total_energy_produced": round(total_energy_produced, 2),
-            "total_energy_consumed": round(total_energy_consumed, 2),
-            "total_fuel_produced": round(total_fuel_produced, 2),
-            "total_fuel_consumed": round(total_fuel_consumed, 2),
-            "population_changes": population_changes or ["No population changes"]
+            "message": f"Turn {turn_number} processed. {event_summary or 'No events.'}",
+            "method": "stored_procedure",
+            "turn_number": turn_number,
+            "events": events,
         }
 
     except Exception as e:
@@ -447,6 +422,29 @@ def init_default_game(db_conn=None):
 
     try:
         cursor = db_conn.cursor()
+
+        # Ensure required tables exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS planetary_assets (
+                planet_id INT NOT NULL,
+                asset_name VARCHAR(100) NOT NULL,
+                asset_type ENUM('Ship','Infrastructure','Equipment') NOT NULL DEFAULT 'Ship',
+                quantity INT NOT NULL DEFAULT 1,
+                base_cost BIGINT NOT NULL DEFAULT 0,
+                PRIMARY KEY (planet_id, asset_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ship_cargo (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                planet_id INT NOT NULL,
+                ship_type VARCHAR(50) NOT NULL DEFAULT '',
+                owner_user_id INT NOT NULL DEFAULT 0,
+                cargo_type VARCHAR(50) NOT NULL DEFAULT '',
+                cargo_amount BIGINT NOT NULL DEFAULT 0,
+                UNIQUE KEY unique_planet_ship_owner_type (planet_id, ship_type, owner_user_id, cargo_type)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
 
         # Check if assets_catalog is empty
         cursor.execute("SELECT COUNT(*) FROM assets_catalog")
@@ -1185,9 +1183,9 @@ def get_first_owned_planet_id(username: str = "Player", db_conn=None) -> Optiona
     try:
         cursor = db_conn.cursor()
         cursor.execute("""
-            SELECT p.planet_id FROM planets
+            SELECT planets.planet_id FROM planets
             WHERE owner_user_id IN (SELECT user_id FROM users WHERE username = %s)
-            ORDER BY planet_id LIMIT 1
+            ORDER BY planets.planet_id LIMIT 1
         """, (username,))
         row = cursor.fetchone()
         cursor.close()
@@ -1508,6 +1506,602 @@ def get_fleet_at_planet(planet_id: int, db_conn=None) -> List[Dict[str, Any]]:
         print(f"Error getting fleet at planet: {e}")
         return []
 
+
+def create_ship(player_user_id: int, planet_id: int, ship_type: str, db_conn=None) -> Optional[int]:
+    """Insert a ship record into the ships table and return the new ship_id."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO ships (owner_user_id, planet_id, ship_type, docking_bay_slot, heading)
+            VALUES ((SELECT user_id FROM users WHERE username = 'Player'), %s, %s, 1, 0)
+        """, (planet_id, ship_type))
+        ship_id = cursor.lastrowid
+        cursor.close()
+        if own_conn:
+            conn.commit()
+        return ship_id
+    except Exception as e:
+        print(f"Error creating ship: {e}")
+        if own_conn:
+            conn.rollback()
+        return None
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def get_player_ships(player_user_id=None, db_conn=None) -> List[Dict[str, Any]]:
+    """Get all ships owned by the player, grouped by planet."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+        sub = "(SELECT user_id FROM users WHERE username = 'Player')"
+        if player_user_id:
+            sub = str(player_user_id)
+        cursor.execute(f"""
+            SELECT s.ship_id, s.ship_type, s.planet_id, p.name as planet_name,
+                   s.docking_bay_slot, s.heading
+            FROM ships s
+            JOIN planets p ON s.planet_id = p.planet_id
+            WHERE s.owner_user_id IN ({sub})
+            ORDER BY s.ship_type
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        print(f"Error getting player ships: {e}")
+        return []
+    finally:
+        if own_conn:
+            conn.close()
+
+
+# =============================================================================
+# RANDOM EVENTS - Supremacy game events (original DOS game mechanic)
+# =============================================================================
+
+# Event definitions: (type, severity, description_template, probability)
+# Events are triggered during turn processing with weighted random selection.
+# Probability is per-planet per-turn (so global chance = prob * num_player_planets).
+EVENT_DEFINITIONS = [
+    {
+        'type': 'Famine',
+        'severity': 'bad',
+        'description': 'Crop failure! Food reserves depleted.',
+        'prob': 0.03,
+        'effect': 'food',
+        'effect_amount': -0.20,
+        'morale_delta': -1,
+    },
+    {
+        'type': 'Plague',
+        'severity': 'bad',
+        'description': 'Disease outbreak! Population reduced.',
+        'prob': 0.02,
+        'effect': 'population',
+        'effect_amount': -0.10,
+        'morale_delta': -2,
+    },
+    {
+        'type': 'Pirate Raid',
+        'severity': 'bad',
+        'description': 'Pirate ships attacked! Cargo and credits lost.',
+        'prob': 0.03,
+        'effect': 'credits',
+        'effect_amount': -5000,
+        'morale_delta': -1,
+    },
+    {
+        'type': 'Meteor Shower',
+        'severity': 'bad',
+        'description': 'Meteor shower damaged infrastructure!',
+        'prob': 0.02,
+        'effect': 'infrastructure',
+        'effect_amount': -1,
+        'morale_delta': -1,
+    },
+    {
+        'type': 'Trade Wind',
+        'severity': 'good',
+        'description': 'Favorable trade winds brought bonus credits!',
+        'prob': 0.05,
+        'effect': 'credits',
+        'effect_amount': 10000,
+        'morale_delta': 1,
+    },
+    {
+        'type': 'Mining Discovery',
+        'severity': 'good',
+        'description': 'Rich mineral deposit discovered!',
+        'prob': 0.04,
+        'effect': 'minerals',
+        'effect_amount': 5000,
+        'morale_delta': 1,
+    },
+    {
+        'type': 'Drought',
+        'severity': 'bad',
+        'description': 'Drought reduced farming output this turn.',
+        'prob': 0.03,
+        'effect': 'food',
+        'effect_amount': -0.10,
+        'morale_delta': -1,
+    },
+    {
+        'type': 'Morale Boost',
+        'severity': 'good',
+        'description': 'Community celebration boosted morale!',
+        'prob': 0.05,
+        'effect': 'morale',
+        'effect_amount': 1,
+        'morale_delta': 1,
+    },
+    {
+        'type': 'Solar Flare',
+        'severity': 'bad',
+        'description': 'Solar flare disrupted solar satellites!',
+        'prob': 0.02,
+        'effect': 'energy',
+        'effect_amount': -0.15,
+        'morale_delta': -1,
+    },
+    {
+        'type': 'Ship Repair',
+        'severity': 'good',
+        'description': 'Crew repaired a damaged vessel.',
+        'prob': 0.03,
+        'effect': 'fuel',
+        'effect_amount': 2000,
+        'morale_delta': 1,
+    },
+]
+
+
+def _get_event_name_display(event_type: str) -> str:
+    """Get the display name for an event type."""
+    display_names = {
+        'Famine': 'Famine',
+        'Plague': 'Plague',
+        'Pirate Raid': 'Pirate Raid',
+        'Meteor Shower': 'Meteor Shower',
+        'Trade Wind': 'Trade Wind',
+        'Mining Discovery': 'Mining Discovery',
+        'Drought': 'Drought',
+        'Morale Boost': 'Morale Boost',
+        'Solar Flare': 'Solar Flare',
+        'Ship Repair': 'Ship Repair',
+    }
+    return display_names.get(event_type, event_type)
+
+
+def _get_event_icon(event_type: str) -> str:
+    """Get the emoji icon for an event type."""
+    icons = {
+        'Famine': '\U0001f33e',
+        'Plague': '\U0001f979',
+        'Pirate Raid': '\U0001f3d6',
+        'Meteor Shower': '☄',
+        'Trade Wind': '\U0001f696',
+        'Mining Discovery': '⛏',
+        'Drought': '☀',
+        'Morale Boost': '\U0001f389',
+        'Solar Flare': '\U0001f321',
+        'Ship Repair': '\U0001f6a2',
+    }
+    return icons.get(event_type, '\U0001f4a5')
+
+
+def trigger_random_events(user_id: int, turn_number: int, db_conn=None) -> List[Dict[str, Any]]:
+    """
+    Trigger random events for the player's owned planets during a turn.
+
+    Each planet has a weighted probability of experiencing an event.
+    Events can affect food, energy, minerals, fuel, population, morale, credits, or infrastructure.
+
+    Args:
+        user_id: Player's user_id
+        turn_number: Current game turn number
+        db_conn: Database connection
+
+    Returns:
+        List of event dicts that were triggered (empty if none)
+    """
+    if not db_conn:
+        return []
+
+    cursor = db_conn.cursor(dictionary=True)
+
+    # Get player's owned planets
+    cursor.execute("""
+        SELECT ps.planet_id, p.name
+        FROM planetary_stats ps
+        JOIN planets p ON ps.planet_id = p.planet_id
+        WHERE p.owner_user_id = %s
+    """, (user_id,))
+    planets = cursor.fetchall()
+
+    if not planets:
+        cursor.close()
+        return []
+
+    triggered: List[Dict[str, Any]] = []
+
+    for planet in planets:
+        pid = planet['planet_id']
+        pname = planet['name']
+
+        for event_def in EVENT_DEFINITIONS:
+            # Weighted random: only trigger if roll < probability
+            if random.random() < event_def['prob']:
+                # Get current planet stats to calculate effect
+                cursor.execute("""
+                    SELECT food_level, energy_level, mineral_level, fuel_level,
+                           population, morale FROM planetary_stats WHERE planet_id = %s
+                """, (pid,))
+                stats = cursor.fetchone()
+                if not stats:
+                    continue
+
+                # Apply effect and compute description
+                desc = event_def['description']
+                severity = event_def['severity']
+                effect_type = event_def['effect']
+                effect_amount = event_def['effect_amount']
+                morale_delta = event_def['morale_delta']
+
+                # For per-planet effects, append planet name
+                desc += f" on {pname}."
+
+                # Apply the effect (calculated in Python)
+                if effect_type == 'credits':
+                    cursor.execute(
+                        "UPDATE users SET credits = GREATEST(0, credits + %s) WHERE user_id = %s",
+                        (effect_amount, user_id)
+                    )
+                elif effect_type == 'food':
+                    current = stats['food_level'] or 0
+                    new_val = int(current + current * effect_amount)
+                    cursor.execute("UPDATE planetary_stats SET food_level = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'energy':
+                    current = stats['energy_level'] or 0
+                    new_val = int(current + current * effect_amount)
+                    cursor.execute("UPDATE planetary_stats SET energy_level = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'minerals':
+                    current = stats['mineral_level'] or 0
+                    new_val = int(current + effect_amount)
+                    cursor.execute("UPDATE planetary_stats SET mineral_level = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'fuel':
+                    current = stats['fuel_level'] or 0
+                    new_val = int(current + effect_amount)
+                    cursor.execute("UPDATE planetary_stats SET fuel_level = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'population':
+                    current = stats['population'] or 0
+                    new_val = max(0, int(current + current * effect_amount))
+                    cursor.execute("UPDATE planetary_stats SET population = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'morale':
+                    current = stats['morale'] or 5
+                    new_val = min(10, max(0, current + effect_amount))
+                    cursor.execute("UPDATE planetary_stats SET morale = %s WHERE planet_id = %s", (new_val, pid))
+                elif effect_type == 'infrastructure':
+                    # Reduce a random colony building by 1
+                    cursor.execute("""
+                        SELECT farming_stations, mining_stations, solar_satellites
+                        FROM colonies WHERE planet_id = %s
+                    """, (pid,))
+                    infra = cursor.fetchone()
+                    if infra:
+                        # Pick weakest stat to reduce
+                        if infra['farming_stations'] > 0:
+                            cursor.execute("UPDATE colonies SET farming_stations = GREATEST(0, farming_stations - %s) WHERE planet_id = %s", (1, pid))
+                        elif infra['solar_satellites'] > 0:
+                            cursor.execute("UPDATE colonies SET solar_satellites = GREATEST(0, solar_satellites - %s) WHERE planet_id = %s", (1, pid))
+                        elif infra['mining_stations'] > 0:
+                            cursor.execute("UPDATE colonies SET mining_stations = GREATEST(0, mining_stations - %s) WHERE planet_id = %s", (1, pid))
+
+                # Log event
+                cursor.execute("""
+                    INSERT INTO game_events (turn_number, planet_id, event_type, severity, description)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (turn_number, pid, event_def['type'], severity, desc))
+
+                triggered.append({
+                    'type': event_def['type'],
+                    'icon': _get_event_icon(event_def['type']),
+                    'description': desc,
+                    'severity': severity,
+                    'planet': pname,
+                    'planet_id': pid,
+                })
+
+    cursor.close()
+    db_conn.commit()
+    return triggered
+
+
+def get_recent_events(user_id: int, limit: int = 20, db_conn=None) -> List[Dict[str, Any]]:
+    """Get recent events for a player, ordered newest first."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT e.event_id, e.turn_number, e.event_type, e.severity,
+                   e.description, e.planet_id, p.name as planet_name, e.created_at
+            FROM game_events e
+            JOIN planets p ON e.planet_id = p.planet_id
+            JOIN planets pp ON e.planet_id = pp.planet_id
+            WHERE pp.owner_user_id IN (SELECT user_id FROM users WHERE user_id = %s)
+               OR e.planet_id IS NULL
+            ORDER BY e.event_id DESC
+            LIMIT %s
+        """, (user_id, limit))
+        rows = cursor.fetchall()
+        cursor.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"Error getting events: {e}")
+        return []
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def transfer_ships(
+    user_id: int,
+    from_planet_id: int,
+    to_planet_id: int,
+    ship_type: str,
+    quantity: int = 1,
+    db_conn=None,
+) -> Dict[str, Any]:
+    """Move ships from one planet to another. Costs 1 fuel per ship. Returns status + messages."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        # Validate source planet exists and has ships
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM ships
+            WHERE owner_user_id = %s AND planet_id = %s AND ship_type = %s
+        """, (user_id, from_planet_id, ship_type))
+        available = cursor.fetchone()['cnt'] or 0
+        if available == 0:
+            return {"status": "error", "message": f"No {ship_type} ships available to transfer."}
+
+        to_move = min(quantity, available)
+
+        # Check fuel cost (1 fuel per ship transferred)
+        cursor.execute("SELECT fuel_level FROM planetary_stats WHERE planet_id = %s", (from_planet_id,))
+        row = cursor.fetchone()
+        current_fuel = row['fuel_level'] or 0
+        if current_fuel < to_move:
+            cursor.close()
+            return {"status": "error", "message": f"Insufficient fuel. Need {to_move}, have {int(current_fuel)}."}
+
+        # Deduct fuel and move ships
+        cursor.execute("UPDATE planetary_stats SET fuel_level = fuel_level - %s WHERE planet_id = %s", (to_move, from_planet_id))
+
+        # Move ships
+        cursor.execute("""
+            UPDATE ships SET planet_id = %s
+            WHERE owner_user_id = %s AND planet_id = %s AND ship_type = %s
+            LIMIT %s
+        """, (to_planet_id, user_id, from_planet_id, ship_type, to_move))
+
+        conn.commit()
+        cursor.close()
+
+        return {
+            "status": "success",
+            "message": f"Transferred {to_move} {ship_type}(s) from planet {from_planet_id} to planet {to_planet_id}.",
+            "transferred": to_move,
+            "remaining_fuel": int(current_fuel - to_move),
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"Transfer error: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def load_cargo(
+    user_id: int,
+    planet_id: int,
+    ship_type: str,
+    resource_type: str,
+    quantity: int,
+    db_conn=None,
+) -> Dict[str, Any]:
+    """Load a resource onto a cargo ship at a planet. resource_type: food/energy/mineral/fuel. Max 1000 per ship."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+        MAX_CARGO = 1000
+
+        # Get planet stats
+        cursor.execute("SELECT fuel_level, food_level, energy_level, mineral_level FROM planetary_stats WHERE planet_id = %s", (planet_id,))
+        stats = cursor.fetchone()
+        if not stats:
+            cursor.close()
+            return {"status": "error", "message": "Planet not found."}
+
+        # Check if there are cargo ships available at this planet
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM ships
+            WHERE owner_user_id = %s AND planet_id = %s AND ship_type = %s
+        """, (user_id, planet_id, ship_type))
+        has_ships = cursor.fetchone()['cnt'] or 0
+        if has_ships == 0:
+            cursor.close()
+            return {"status": "error", "message": f"No {ship_type} available at this planet for loading."}
+
+        # Get existing cargo for this planet/ship type combo
+        cursor.execute("""
+            SELECT COALESCE(cargo_amount, 0) as loaded FROM ship_cargo
+            WHERE planet_id = %s AND ship_type = %s AND owner_user_id = %s
+            LIMIT 1
+        """, (planet_id, ship_type, user_id))
+        row = cursor.fetchone()
+        current_loaded = row['loaded'] if row else 0
+
+        # Total capacity = (available ships) * MAX_CARGO, subtract what's already loaded
+        total_capacity = has_ships * MAX_CARGO
+        remaining_capacity = total_capacity - current_loaded
+
+        if remaining_capacity <= 0:
+            cursor.close()
+            return {"status": "error", "message": "All cargo ships at this planet are full."}
+
+        to_load = min(quantity, remaining_capacity)
+
+        # Check if planet has enough of the resource
+        resource_field = f"{resource_type}_level"
+        current_amount = stats[resource_field] or 0
+        if current_amount < to_load:
+            cursor.close()
+            return {"status": "error", "message": f"Insufficient {resource_type}. Need {to_load}, have {int(current_amount)}."}
+
+        # Deduct from planet and load onto cargo ship
+        cursor.execute(f"UPDATE planetary_stats SET {resource_field} = {resource_field} - %s WHERE planet_id = %s", (to_load, planet_id))
+
+        # Insert or update cargo record
+        if current_loaded > 0:
+            cursor.execute("""
+                INSERT INTO ship_cargo (planet_id, ship_type, owner_user_id, cargo_type, cargo_amount)
+                VALUES (%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE cargo_amount = cargo_amount + %s
+            """, (planet_id, ship_type, user_id, resource_type, to_load, to_load))
+        else:
+            cursor.execute("""
+                INSERT INTO ship_cargo (planet_id, ship_type, owner_user_id, cargo_type, cargo_amount)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (planet_id, ship_type, user_id, resource_type, to_load))
+
+        conn.commit()
+        cursor.close()
+
+        return {
+            "status": "success",
+            "message": f"Loaded {to_load} {resource_type} onto cargo ship at planet {planet_id}.",
+            "loaded": to_load,
+            "cargo_remaining": total_capacity - current_loaded - to_load,
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"Load error: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def unload_cargo(
+    user_id: int,
+    planet_id: int,
+    resource_type: str,
+    db_conn=None,
+) -> Dict[str, Any]:
+    """Unload cargo of specific resource type onto a planet."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT cargo_amount FROM ship_cargo
+            WHERE planet_id = %s AND owner_user_id = %s AND cargo_type = %s
+        """, (planet_id, user_id, resource_type))
+        row = cursor.fetchone()
+        if not row or not row['cargo_amount']:
+            cursor.close()
+            return {"status": "error", "message": f"No {resource_type} cargo at this planet."}
+
+        amount = row['cargo_amount']
+
+        # Add to planet stats
+        resource_field = f"{resource_type}_level"
+        cursor.execute(f"UPDATE planetary_stats SET {resource_field} = {resource_field} + %s WHERE planet_id = %s", (amount, planet_id))
+
+        # Remove cargo record
+        cursor.execute("DELETE FROM ship_cargo WHERE planet_id = %s AND owner_user_id = %s AND cargo_type = %s", (planet_id, user_id, resource_type))
+
+        conn.commit()
+        cursor.close()
+
+        return {
+            "status": "success",
+            "message": f"Unloaded {amount} {resource_type} at planet {planet_id}.",
+            "unloaded": amount,
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"Unload error: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def get_transfer_data(user_id: int, planet_id: int, db_conn=None) -> Dict[str, Any]:
+    """Get data needed for fleet transfer UI: ships at planet and available cargo ships."""
+    conn = db_conn or get_db_connection()
+    own_conn = not db_conn
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT ship_type, COUNT(*) as ship_count
+            FROM ships WHERE owner_user_id = %s AND planet_id = %s
+            GROUP BY ship_type
+        """, (user_id, planet_id))
+        ships = {r['ship_type']: r['ship_count'] for r in cursor.fetchall()}
+
+        # Get cargo data per ship type
+        cursor.execute("""
+            SELECT ship_type, cargo_type, SUM(cargo_amount) as total
+            FROM ship_cargo WHERE owner_user_id = %s AND planet_id = %s
+            GROUP BY ship_type, cargo_type
+        """, (user_id, planet_id))
+        cargo_rows = cursor.fetchall() or []
+
+        cargo = {}
+        for r in cargo_rows:
+            cargo.setdefault(r['ship_type'], {})[r['cargo_type']] = r['total'] or 0
+
+        # Get destination planets (owned by user, excluding current)
+        cursor.execute("""
+            SELECT p.planet_id as id, p.name FROM planets p
+            WHERE p.owner_user_id = %s AND p.planet_id != %s
+            ORDER BY p.name
+        """, (user_id, planet_id))
+        destinations = [{'id': r['id'], 'name': r['name']} for r in cursor.fetchall()]
+
+        cursor.close()
+
+        return {
+            "ships": ships,
+            "cargo": cargo,
+            "destinations": destinations,
+        }
+    except Exception as e:
+        print(f"Get transfer data error: {e}")
+        return {"ships": {}, "cargo": {}, "destinations": []}
+    finally:
+        if own_conn:
+            conn.close()
+
+
+# MySQL functions for use in stored procedures
+# These need to be called as subqueries in the stored procedure
+# FLOOR and GREATEST/LEAST are native MySQL functions.
 
 if __name__ == "__main__":
     # Test functions when run directly

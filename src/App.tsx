@@ -82,9 +82,9 @@ const App: React.FC = () => {
     setMessage("System List - Browse All Systems");
   };
 
-  const goBattle = (attackerId: number, defenderId: number) => {
+  const goBattle = () => {
     setCurrentScreen('battle');
-    setMessage(`Battle Setup: ${attackerId} vs ${defenderId}`);
+    setMessage("Battle Simulation - Select battles to simulate");
   };
 
   const goDebug = () => {
@@ -118,7 +118,7 @@ const App: React.FC = () => {
           <button onClick={() => goToMarketplace('compact')} className="nav-btn" id="btn-marketplace-compact">[2b] Compact Grid</button>
           <button onClick={() => goToPlanets()} className="nav-btn" id="btn-planet-details">[3] Planet Details</button>
           <button onClick={goToDashboard} className="nav-btn" id="btn-dashboard">[4] Dashboard</button>
-          <button onClick={goBattle.bind(this, 1, 3)} className="nav-btn" id="btn-battle-sim">[7] Battle Sim</button>
+          <button onClick={goBattle} className="nav-btn" id="btn-battle-sim">[7] Battle Sim</button>
           <button onClick={goDebug} className="nav-btn debug" id="btn-debug">[8] Debug Tools</button>
           <button onClick={goToSystems} className="nav-btn" id="btn-systems">[10] System List</button>
           <button onClick={goMyAssets} className="nav-btn" id="btn-my-assets">[11] My Assets</button>
@@ -167,7 +167,7 @@ const App: React.FC = () => {
                 <h3>[4] DASHBOARD</h3>
                 <p>View all planets from database with full stats and resources</p>
               </div>
-              <div className="menu-card" onClick={goBattle.bind(this, 1, 3)} style={{cursor: 'pointer'}}>
+              <div className="menu-card" onClick={goBattle} style={{cursor: 'pointer'}}>
                 <h3>[7] BATTLE SIMULATION</h3>
                 <p>Resolve combat between planets</p>
               </div>
