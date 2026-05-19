@@ -332,9 +332,60 @@ def run_turn(user_id: int, db_conn=None) -> Dict[str, Any]:
         """, (turn_number, turn_number))
         db_conn.commit()
 
-        # Call the stored procedure for batch turn processing
-        cursor.callproc("process_player_turns_batch", (user_id,))
-        cursor.close()
+        # Single bulk UPDATE for all owned planets — all logic in one SQL statement
+        # Derived table t precomputes production/consumption per planet, then
+        # we join it back into planetary_stats for a single UPDATE pass.
+        cursor.execute("""
+            UPDATE planetary_stats ps
+            INNER JOIN (
+                SELECT
+                    ps2.planet_id,
+                    COALESCE(SUM(c.farming_stations), 0) * 15.0 AS farming_prod,
+                    COALESCE(SUM(c.solar_satellites), 0) * 12.0 AS solar_prod,
+                    COALESCE(SUM(c.mining_stations), 0) * 8.0 AS mineral_prod,
+                    COALESCE(SUM(c.mining_stations), 0) * 8.0 * 0.5 +
+                        COALESCE(SUM(c.farming_stations), 0) * 15.0 * 0.2 AS fuel_prod,
+                    COALESCE(SUM(c.mining_stations), 0) * 8.0 AS fuel_from_minerals,
+                    COALESCE(SUM(c.farming_stations), 0) * 15.0 * 0.2 AS fuel_from_food,
+                    (SELECT COALESCE(COUNT(*), 0) FROM ships s WHERE s.planet_id = ps2.planet_id) AS fleet_count,
+                    ROUND(GREATEST(0,
+                        COALESCE(SUM(c.farming_stations), 0) * 15.0
+                        - ps2.population * 0.5
+                        + COALESCE(SUM(c.mining_stations), 0) * 8.0 * 0.5
+                        + COALESCE(SUM(c.farming_stations), 0) * 15.0 * 0.2
+                        - (SELECT COALESCE(COUNT(*), 0) FROM ships s WHERE s.planet_id = ps2.planet_id) * 0.8
+                    ) / 500.0, 2) AS morale_delta,
+                    ROUND(ps2.population * (ps2.morale / 10.0) * 0.005 *
+                          (1 + GREATEST(0,
+                            COALESCE(SUM(c.farming_stations), 0) * 15.0
+                            - ps2.population * 0.5
+                            + COALESCE(SUM(c.mining_stations), 0) * 8.0 * 0.5
+                            + COALESCE(SUM(c.farming_stations), 0) * 15.0 * 0.2
+                            - (SELECT COALESCE(COUNT(*), 0) FROM ships s WHERE s.planet_id = ps2.planet_id) * 0.8
+                          ) / 10000.0), 0) AS pop_growth
+                FROM planetary_stats ps2
+                LEFT JOIN colonies c ON c.planet_id = ps2.planet_id
+                JOIN planets p ON p.planet_id = ps2.planet_id
+                WHERE p.owner_user_id = %s
+                GROUP BY ps2.planet_id, ps2.population, ps2.morale,
+                         ps2.food_level, ps2.energy_level, ps2.fuel_level
+            ) AS t ON t.planet_id = ps.planet_id
+            SET
+                ps.food_level = FLOOR(ps.food_level + t.farming_prod - ps.population * 0.5 - t.fleet_count),
+                ps.energy_level = FLOOR(ps.energy_level + t.solar_prod - ps.population * 0.3 - t.fleet_count * 2),
+                ps.fuel_level = FLOOR(ps.fuel_level + t.fuel_prod - t.fleet_count * 0.8),
+                ps.mineral_level = COALESCE(ps.mineral_level, 0) + t.mineral_prod,
+                ps.morale = GREATEST(0, LEAST(10, ps.morale +
+                    CASE WHEN ps.food_level >= 0 AND ps.energy_level >= 0 AND ps.fuel_level >= 0
+                         THEN t.morale_delta
+                         ELSE -0.5 END)),
+                ps.population = GREATEST(0, ps.population +
+                    CASE WHEN ps.food_level >= 0 AND ps.energy_level >= 0 AND ps.fuel_level >= 0
+                         THEN t.pop_growth
+                         WHEN ps.food_level < 0 THEN
+                             -FLOOR(ps.population * ABS(ps.food_level) / 50.0)
+                         ELSE 0 END)
+        """, (user_id,))
         db_conn.commit()
 
         # Trigger random events after turn processing
@@ -354,7 +405,7 @@ def run_turn(user_id: int, db_conn=None) -> Dict[str, Any]:
         return {
             "turn_complete": True,
             "message": f"Turn {turn_number} processed. {event_summary or 'No events.'}",
-            "method": "stored_procedure",
+            "method": "direct_update",
             "turn_number": turn_number,
             "events": events,
         }
